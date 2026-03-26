@@ -1520,6 +1520,12 @@ h1, h2, h3, .brand-title {
     .topic-header, .servico-card-header {
         flex-wrap: wrap;
         gap: 10px;
+        align-items: flex-start;
+    }
+
+    .rank-badge {
+        margin-top: 2px;
+        margin-bottom: 2px;
     }
 
     .user-info-main {

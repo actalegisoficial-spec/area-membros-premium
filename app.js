@@ -354,13 +354,15 @@ function setupEventListeners() {
     }
 
     // --- LOGOUT ---
+    window.doLogout = async () => {
+        await sb.auth.signOut();
+        localStorage.clear();
+        location.reload();
+    };
+
     const logoutBtn = document.getElementById('logout-btn');
     if (logoutBtn) {
-        logoutBtn.onclick = async () => {
-            await sb.auth.signOut();
-            localStorage.clear();
-            location.reload();
-        };
+        logoutBtn.onclick = window.doLogout;
     }
 
     document.querySelectorAll('.nav-item, .mobile-nav-item').forEach(item => {
@@ -848,12 +850,12 @@ async function renderCommunity(selectedTheme = null, searchQuery = null) {
                     ${filteredTopics.map(t => `
                         <div class="topic-item" onclick="window.appShowTopic(${t.id})">
                             <div class="topic-header">
-                                <div class="user-info-main" style="display: flex; align-items: center; gap: 8px;">
+                                <div class="user-info-main" style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
                                     <span style="white-space:nowrap;">[${t.theme}] Por</span>
-                                    <strong class="text-truncate">${t.user_name || 'Desconhecido'}</strong> 
+                                    <strong class="text-truncate" style="max-width: 140px;">${t.user_name || 'Desconhecido'}</strong> 
                                     ${getUserRankBadge(t.user_name || '')}
                                 </div>
-                                <span style="font-size: 0.85rem; color: var(--text-muted);">${new Date(t.created_at).toLocaleDateString('pt-BR')}</span>
+                                <span style="font-size: 0.85rem; color: var(--text-muted); white-space: nowrap;">${new Date(t.created_at).toLocaleDateString('pt-BR')}</span>
                             </div>
                             <div class="topic-title">${t.title}</div>
                             <div class="topic-meta">
