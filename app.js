@@ -432,6 +432,7 @@ async function showMainApp() {
                     // Auto-fix Visual: Se o dono estiver como "Aluno" no banco, força Administrador no App
                     if (isOwner && profile.role !== 'Administrador') {
                         profile.role = 'Administrador';
+                        console.log('Acta Members: Forçando cargo de Administrador para o Dono.');
                         // Tenta corrigir no banco (pode falhar por RLS, mas o UI fica certo)
                         sb.from('users').update({ role: 'Administrador' }).eq('email', user.email).then();
                     }
@@ -440,20 +441,39 @@ async function showMainApp() {
                     const completedIds = profile.completed_activities || [];
                     state.activities.forEach(a => { a.completed = completedIds.includes(a.id); });
                 } else {
+                    console.log('Acta Members: Criando novo perfil para', user.email);
                     const newProfile = {
-                        id: user.id, // Vínculo obrigatório com Auth para o RLS funcionar
+                        id: user.id,
                         email: user.email,
-                        name: state.user.name,
+                        name: state.user.name || userEmail.split('@')[0],
                         profession: 'Estudante',
                         joined_date: new Date().toLocaleDateString('pt-BR'),
                         role: isOwner ? 'Administrador' : 'Aluno',
                         points: 0,
                         completed_activities: []
                     };
-                    const { data: created } = await sb.from('users').upsert(newProfile, { onConflict: 'email' }).select().maybeSingle();
-                    if (created) {
-                        state.points = created.points || 0;
-                        if (!state.allUsers.find(u => u.email === created.email)) state.allUsers.push(created);
+                    
+                    try {
+                        let { data: created, error: upsertError } = await sb.from('users').upsert(newProfile, { onConflict: 'email' }).select().maybeSingle();
+                        
+                        // FALLBACK: Se falhar (ex: RLS bloqueando 'Administrador'), tenta criar como 'Aluno'
+                        if (upsertError && isOwner) {
+                            console.warn('Acta Members: Falha ao criar como Admin (RLS?). Tentando como Aluno...');
+                            newProfile.role = 'Aluno';
+                            const fallback = await sb.from('users').upsert(newProfile, { onConflict: 'email' }).select().maybeSingle();
+                            created = fallback.data;
+                            if (fallback.error) console.error('Acta Members: Falha total na criação do perfil:', fallback.error);
+                        }
+
+                        if (created) {
+                            state.points = created.points || 0;
+                            if (!state.allUsers.find(u => u.email === created.email)) state.allUsers.push(created);
+                            console.log('Acta Members: Perfil sincronizado com sucesso.');
+                        } else {
+                            console.warn('Acta Members: Perfil não foi retornado pelo banco (sem erro crítico).');
+                        }
+                    } catch (upsertCatch) {
+                        console.error('Acta Members: Exceção no upsert:', upsertCatch);
                     }
                 }
                 updateLevel();
