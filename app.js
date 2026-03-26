@@ -668,46 +668,50 @@ window.appToggleActivity = (id) => {
     renderRanking(); // Keep ranking position in sync after activity/points change
 };
 
-async function saveState() {
-    if (!state.user || !state.user.email) return;
-    try {
-        const u = state.allUsers.find(x => x.email === state.user.email);
-        const completedIds = state.activities.filter(a => a.completed).map(a => a.id);
-        
-        // Sempre salva LocalStorage como fallback
-        const localData = {
-            points: state.points,
-            completed_activities: completedIds
-        };
-        if (u) {
-            localData.name = u.name;
-            localData.profession = u.profession;
-            localData.phone = u.phone;
-            localData.city = u.city;
-            localData.photo = u.photo;
-        }
-        localStorage.setItem(`progress_${state.user.email}`, JSON.stringify(localData));
+async function saveState(emailToSave = null) {
+    const targetEmail = emailToSave || (state.user ? state.user.email : null);
+    if (!targetEmail) return;
 
-        if (u) {
-            const { error } = await sb.from('users').update({ 
-                points: state.points, completed_activities: completedIds,
+    try {
+        const u = state.allUsers.find(x => x.email === targetEmail);
+        if (!u) return;
+
+        // Se é o próprio usuário logado, sincroniza estado local
+        if (targetEmail === state.user.email) {
+            const completedIds = state.activities.filter(a => a.completed).map(a => a.id);
+            u.points = state.points;
+            u.completed_activities = completedIds;
+            
+            const localData = {
+                points: state.points,
+                completed_activities: completedIds,
                 name: u.name, profession: u.profession, phone: u.phone, city: u.city, photo: u.photo
-            }).eq('email', state.user.email);
-            if (error) {
-                if (state.user.email === 'charlesnunes77@yahoo.com.br') {
-                    console.error('ERRO SUPABASE: Seu usuário Auth perdeu o vínculo com a tabela users.', error);
-                    window.appShowToast('Erro de Permissão (RLS). Veja o aviso que mandei no chat.', 'error');
-                }
-                throw error;
+            };
+            localStorage.setItem(`progress_${targetEmail}`, JSON.stringify(localData));
+        }
+
+        // Persiste no Supabase
+        const { error } = await sb.from('users').update({ 
+            points: u.points, 
+            completed_activities: u.completed_activities || [],
+            name: u.name, 
+            profession: u.profession, 
+            phone: u.phone, 
+            city: u.city, 
+            address: u.address,
+            photo: u.photo,
+            role: u.role,
+            is_blocked: u.isBlocked === true
+        }).eq('email', targetEmail);
+
+        if (error) {
+            console.error('Acta Members: Erro ao salvar no banco:', error);
+            if (state.user.isModerator) {
+                window.appShowToast('Erro de permissão! Rode o SQL v1.4 no Supabase.', 'error');
             }
-        } else {
-            const { error } = await sb.from('users').update({ 
-                points: state.points, completed_activities: completedIds
-            }).eq('email', state.user.email);
-            if (error) throw error;
         }
     } catch (e) {
-        console.error('Erro ao salvar no servidor (usando cache local):', e);
+        console.error('Acta Members: Erro no saveState:', e);
     }
 }
 
@@ -1593,11 +1597,11 @@ window.appChangeProfession = (email) => {
         <input type="text" id="new-profession-input" class="modal-input" value="${user.profession}">
     `;
     
-    appShowModal('Editar Profissão', body, () => {
+    appShowModal('Editar Profissão', body, async () => {
         const newVal = document.getElementById('new-profession-input').value;
         if (newVal) {
             user.profession = newVal;
-            saveState();
+            await saveState(email);
             renderUsers();
             appCloseModal();
         }
@@ -1611,9 +1615,9 @@ window.appToggleUserRole = (email) => {
     const newRole = user.role === 'Administrador' ? 'Aluno' : 'Administrador';
     const body = `<p>Deseja mudar o cargo de <strong>${user.name}</strong> para <strong>${newRole}</strong>?</p>`;
     
-    appShowModal('Alterar Cargo', body, () => {
+    appShowModal('Alterar Cargo', body, async () => {
         user.role = newRole;
-        saveState();
+        await saveState(email);
         renderUsers();
         appCloseModal();
     });
@@ -1626,9 +1630,9 @@ window.appToggleUserBlock = (email) => {
     const action = user.isBlocked ? 'desbloquear' : 'bloquear';
     const body = `<p>Tem certeza que deseja <strong>${action}</strong> o acesso de <strong>${user.name}</strong>?</p>`;
     
-    appShowModal('Confirmar Ação', body, () => {
+    appShowModal('Confirmar Ação', body, async () => {
         user.isBlocked = !user.isBlocked;
-        saveState();
+        await saveState(email);
         renderUsers();
         appCloseModal();
     });
