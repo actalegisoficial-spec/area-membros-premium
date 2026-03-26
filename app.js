@@ -810,9 +810,9 @@ async function renderCommunity(selectedTheme = null, searchQuery = null) {
 
     // Tabs
     html += `
-        <div style="display: flex; gap: 10px; overflow-x: auto; margin-bottom: 20px; padding: 10px 0;">
+        <div class="scroll-x-container" style="margin-bottom: 20px;">
             ${tabs.map(t => `
-                <button class="btn" onclick="renderCommunity('${t}')" style="padding: 10px 20px; font-size: 0.95rem; background: ${selectedTheme === t && !searchQuery ? 'var(--gold)' : 'white'}; color: ${selectedTheme === t && !searchQuery ? 'black' : 'var(--navy-deep)'}; border: 1px solid #DDD; white-space: nowrap; font-weight: ${selectedTheme === t && !searchQuery ? '700' : '500'};">
+                <button class="btn" onclick="renderCommunity('${t}')" style="padding: 10px 20px; font-size: 0.95rem; background: ${selectedTheme === t && !searchQuery ? 'var(--gold)' : 'white'}; color: ${selectedTheme === t && !searchQuery ? 'black' : 'var(--navy-deep)'}; border: 1px solid #DDD; white-space: nowrap; font-weight: ${selectedTheme === t && !searchQuery ? '700' : '500'}; flex-shrink: 0;">
                     ${t}
                 </button>
             `).join('')}
@@ -848,8 +848,12 @@ async function renderCommunity(selectedTheme = null, searchQuery = null) {
                     ${filteredTopics.map(t => `
                         <div class="topic-item" onclick="window.appShowTopic(${t.id})">
                             <div class="topic-header">
-                                <span style="display: flex; align-items: center; gap: 8px;">[${t.theme}] Por <strong>${t.user_name || 'Desconhecido'}</strong> ${getUserRankBadge(t.user_name || '')}</span>
-                                <span>${new Date(t.created_at).toLocaleDateString('pt-BR')}</span>
+                                <div class="user-info-main" style="display: flex; align-items: center; gap: 8px;">
+                                    <span style="white-space:nowrap;">[${t.theme}] Por</span>
+                                    <strong class="text-truncate">${t.user_name || 'Desconhecido'}</strong> 
+                                    ${getUserRankBadge(t.user_name || '')}
+                                </div>
+                                <span style="font-size: 0.85rem; color: var(--text-muted);">${new Date(t.created_at).toLocaleDateString('pt-BR')}</span>
                             </div>
                             <div class="topic-title">${t.title}</div>
                             <div class="topic-meta">
@@ -1028,11 +1032,13 @@ async function renderMural() {
                 const hasLiked = p.liked_by && p.liked_by.includes(state.user.email);
                 return `
                 <div class="card" style="border-top: 3px solid var(--gold); animation: fadeIn 0.5s ease-out;">
-                    <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 5px;">
-                        <div style="width: 36px; height: 36px; border-radius: 50%; background: var(--gold); color: black; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 14px;">${p.user_name ? p.user_name.charAt(0).toUpperCase() : '?'}</div>
-                        <div style="display: flex; flex-direction: column;">
-                            <strong>${p.user_name || 'Desconhecido'}</strong>
-                            ${getUserRankBadge(p.user_name || '')}
+                    <div class="topic-header" style="margin-bottom: 10px;">
+                        <div class="user-info-main" style="display: flex; align-items: center; gap: 10px;">
+                            <div style="width: 36px; height: 36px; border-radius: 50%; background: var(--gold); color: black; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 14px; flex-shrink: 0;">${p.user_name ? p.user_name.charAt(0).toUpperCase() : '?'}</div>
+                            <div style="display: flex; flex-direction: column; overflow: hidden;">
+                                <strong class="text-truncate">${p.user_name || 'Desconhecido'}</strong>
+                                ${getUserRankBadge(p.user_name || '')}
+                            </div>
                         </div>
                     </div>
                     <p style="font-size: 1rem; margin: 10px 0; color: #EEE;">${p.text}</p>
@@ -1097,6 +1103,23 @@ window.appToggleMuralLike = async (postId, btnElement) => {
         newLikedBy = [...post.liked_by, userEmail];
     }
 
+    // --- OTIMIZAÇÃO VISUAL INSTANTÂNEA ---
+    const isNowLiked = !hasLiked;
+    const heartIcon = btnElement.querySelector('i');
+    const likeCount = btnElement.querySelector('.like-count');
+    
+    if (heartIcon) {
+        heartIcon.style.fill = isNowLiked ? '#FF3B30' : 'none';
+        heartIcon.style.color = isNowLiked ? '#FF3B30' : 'var(--text-muted)';
+    }
+    if (likeCount) {
+        likeCount.innerText = newLikedBy.length;
+    }
+
+    // Atualiza estado local para persistência entre abas
+    post.liked_by = newLikedBy;
+    post.likes = newLikedBy.length;
+
     const { error } = await sb
         .from('mural_posts')
         .update({ 
@@ -1107,6 +1130,14 @@ window.appToggleMuralLike = async (postId, btnElement) => {
 
     if (error) {
         window.appShowToast('Erro ao curtir: ' + error.message, 'error');
+        // Reverter UI em caso de erro (opcional, mas bom para UX)
+        if (heartIcon) {
+            heartIcon.style.fill = hasLiked ? '#FF3B30' : 'none';
+            heartIcon.style.color = hasLiked ? '#FF3B30' : 'var(--text-muted)';
+        }
+        if (likeCount) {
+            likeCount.innerText = post.likes;
+        }
     }
 };
 
@@ -1176,10 +1207,13 @@ async function renderServicos(searchQuery = '') {
                 return `
                 <div class="card servico-card ${p.finalized ? 'status-finalized' : ''}">
                     <div class="servico-card-header">
-                        <div class="user-info" style="display: flex; align-items: center; gap: 10px;">
-                            ${userPhoto ? `<img src="${userPhoto}" style="width: 32px; height: 32px; border-radius: 50%; object-fit: cover;">` : `<div style="width: 32px; height: 32px; border-radius: 50%; background: var(--gold); color: black; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 14px;">${p.user_name ? p.user_name.charAt(0).toUpperCase() : '?'}</div>`}
-                            <div>
-                                <div style="display: flex; align-items: center; gap: 8px;"><strong>${p.user_name}</strong> ${getUserRankBadge(p.user_name)}</div>
+                        <div class="user-info-main" style="display: flex; align-items: center; gap: 10px; overflow: hidden;">
+                            ${userPhoto ? `<img src="${userPhoto}" style="width: 32px; height: 32px; border-radius: 50%; object-fit: cover; flex-shrink:0;">` : `<div style="width: 32px; height: 32px; border-radius: 50%; background: var(--gold); color: black; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 14px; flex-shrink:0;">${p.user_name ? p.user_name.charAt(0).toUpperCase() : '?'}</div>`}
+                            <div style="overflow: hidden; display: flex; flex-direction: column;">
+                                <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+                                    <strong class="text-truncate">${p.user_name}</strong> 
+                                    ${getUserRankBadge(p.user_name)}
+                                </div>
                                 <span class="servico-date" style="display: block;">${new Date(p.created_at).toLocaleDateString('pt-BR')}</span>
                             </div>
                         </div>
