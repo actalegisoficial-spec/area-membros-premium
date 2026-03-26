@@ -365,6 +365,11 @@ function setupEventListeners() {
         logoutBtn.onclick = window.doLogout;
     }
 
+    // Mobile logout binding
+    document.querySelectorAll('.btn-logout-mobile').forEach(btn => {
+        btn.onclick = window.doLogout;
+    });
+
     document.querySelectorAll('.nav-item, .mobile-nav-item').forEach(item => {
         item.onclick = () => {
             const viewName = item.getAttribute('data-view');
