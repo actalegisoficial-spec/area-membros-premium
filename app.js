@@ -1397,14 +1397,77 @@ function triggerConfetti() {
 // saveState foi unificado e movido para cima
 // loadState está definido acima também
 
+state.userSortCriteria = 'name'; // Default sorting
+
+window.appSortUsers = (criteria) => {
+    state.userSortCriteria = criteria;
+    renderUsers();
+};
+
+window.appAskDeleteUser = (email) => {
+    const user = state.allUsers.find(u => u.email === email);
+    if (!user) return;
+    if (email === state.user.email) {
+        window.appShowToast('Você não pode se excluir!', 'error');
+        return;
+    }
+
+    const body = `
+        <div style="text-align:center; padding: 20px;">
+            <i data-lucide="alert-triangle" style="width: 48px; height: 48px; color: #ff4444; margin-bottom: 15px;"></i>
+            <p>Deseja realmente <strong>EXCLUIR DEFINITIVAMENTE</strong> o aluno <strong>${user.name}</strong>?</p>
+            <p style="font-size: 0.8rem; color: #888; margin-top: 10px;">Esta ação não pode ser desfeita e removerá todos os pontos e progresso.</p>
+        </div>
+    `;
+
+    appShowModal('Confirmar Exclusão Crítica', body, async () => {
+        const { error } = await sb.from('users').delete().eq('email', email);
+        if (error) {
+            window.appShowToast('Erro ao excluir: ' + error.message, 'error');
+        } else {
+            state.allUsers = state.allUsers.filter(u => u.email !== email);
+            renderUsers();
+            renderRanking();
+            window.appShowToast('Usuário excluído com sucesso.', 'success');
+            appCloseModal();
+        }
+    });
+    refreshIcons();
+};
+
 function renderUsers() {
     const view = document.getElementById('users-view');
     if (!view) return;
+
+    // Apply Sorting logic
+    let sortedUsers = [...state.allUsers];
+    if (state.userSortCriteria === 'name') {
+        sortedUsers.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+    } else if (state.userSortCriteria === 'recent') {
+        // Assume joined_date is "DD/MM/YYYY" or valid date string
+        sortedUsers.sort((a, b) => {
+            const dateA = a.created_at ? new Date(a.created_at) : new Date(0);
+            const dateB = b.created_at ? new Date(b.created_at) : new Date(0);
+            return dateB - dateA;
+        });
+    } else if (state.userSortCriteria === 'points') {
+        sortedUsers.sort((a, b) => (b.points || 0) - (a.points || 0));
+    }
 
     view.innerHTML = `
         <div class="view-header">
             <h2>Gestão de Usuários</h2>
             <p>Administre quem tem acesso e modifique profissões.</p>
+        </div>
+
+        <div style="margin-bottom: 20px; display: flex; gap: 15px; align-items: center; flex-wrap: wrap;">
+            <label style="color: var(--gold); font-size: 0.9rem; font-weight: 600;">Ordenar por:</label>
+            <select class="input-styled" style="width: auto; padding: 8px 15px;" onchange="window.appSortUsers(this.value)">
+                <option value="name" ${state.userSortCriteria === 'name' ? 'selected' : ''}>Nome (A-Z)</option>
+                <option value="recent" ${state.userSortCriteria === 'recent' ? 'selected' : ''}>Mais Recentes</option>
+                <option value="points" ${state.userSortCriteria === 'points' ? 'selected' : ''}>Nível / Pontos</option>
+            </select>
+            <span style="color: var(--text-muted); font-size: 0.85rem; margin-left: auto;">Total: ${sortedUsers.length} alunos</span>
         </div>
         
         <div class="card" style="padding: 0; overflow: hidden;">
@@ -1415,21 +1478,19 @@ function renderUsers() {
                             <th>Nome / E-mail</th>
                         <th>Cargo</th>
                         <th>Profissão</th>
-                        <th>Telefone</th>
-                        <th>Cidade / Endereço</th>
-                        <th>Membro desde</th>
+                        <th>Cidade</th>
                         <th>Status</th>
                         <th>Ações</th>
                     </tr>
                 </thead>
                 <tbody>
-                    ${state.allUsers.map(u => `
+                    ${sortedUsers.map(u => `
                         <tr class="${u.isBlocked ? 'row-blocked' : ''}">
                             <td>
                                 <div style="display: flex; align-items: center; gap: 10px;">
-                                    ${u.photo ? `<img src="${u.photo}" style="width: 36px; height: 36px; border-radius: 50%; object-fit: cover;">` : `<div style="width: 36px; height: 36px; border-radius: 50%; background: var(--gold); color: black; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 14px;">${u.name.charAt(0).toUpperCase()}</div>`}
+                                    ${u.photo ? `<img src="${u.photo}" style="width: 36px; height: 36px; border-radius: 50%; object-fit: cover;">` : `<div style="width: 36px; height: 36px; border-radius: 50%; background: var(--gold); color: black; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 14px;">${u.name ? u.name.charAt(0).toUpperCase() : '?'}</div>`}
                                     <div>
-                                        <strong>${u.name}</strong> ${u.email === state.user.email ? '<span class="badge-me">Você</span>' : ''}
+                                        <strong>${u.name || 'Sem Nome'}</strong> ${u.email === state.user.email ? '<span class="badge-me">Você</span>' : ''}
                                         <div style="margin-top: 4px;">${getUserRankBadge(u.email)}</div>
                                         <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 4px;">${u.email}</div>
                                     </div>
@@ -1437,29 +1498,34 @@ function renderUsers() {
                             </td>
                             <td>
                                 <span class="badge-role ${u.role === 'Administrador' ? 'role-admin' : 'role-aluno'}">${u.role || 'Aluno'}</span>
-                                <button class="btn-edit-small" onclick="window.appToggleUserRole('${u.email}')"><i data-lucide="refresh-cw"></i></button>
+                                <button class="btn-edit-small" onclick="window.appToggleUserRole('${u.email}')" title="Mudar Cargo"><i data-lucide="refresh-cw"></i></button>
                             </td>
                             <td>
-                                <span class="prof-label">${u.profession}</span>
-                                <button class="btn-edit-small" onclick="window.appChangeProfession('${u.email}')"><i data-lucide="edit-3"></i></button>
+                                <span class="prof-label">${u.profession || 'Estudante'}</span>
+                                <button class="btn-edit-small" onclick="window.appChangeProfession('${u.email}')" title="Editar Profissão"><i data-lucide="edit-3"></i></button>
                             </td>
-                            <td>${u.phone || '-'}</td>
-                            <td>
-                                <div>${u.city || '-'}</div>
-                                <div style="font-size: 0.8rem; color: var(--text-muted);">${u.address || '-'}</div>
-                            </td>
-                            <td>${u.joined_date || '-'}</td>
+                            <td>${u.city || '-'}</td>
                             <td>
                                 <span class="status-indicator ${u.isBlocked ? 'status-blocked' : 'status-active'}">
                                     ${u.isBlocked ? 'Bloqueado' : 'Ativo'}
                                 </span>
                             </td>
                             <td>
-                                <button class="btn-action ${u.isBlocked ? 'btn-unblock' : 'btn-block-user'}" 
-                                        onclick="window.appToggleUserBlock('${u.email}')"
-                                        ${u.email === state.user.email ? 'disabled style="opacity: 0.3; cursor: not-allowed;"' : ''}>
-                                    ${u.isBlocked ? 'Desbloquear' : 'Bloquear'}
-                                </button>
+                                <div style="display: flex; gap: 8px;">
+                                    <button class="btn-action ${u.isBlocked ? 'btn-unblock' : 'btn-block-user'}" 
+                                            onclick="window.appToggleUserBlock('${u.email}')"
+                                            ${u.email === state.user.email ? 'disabled style="opacity: 0.3; cursor: not-allowed;"' : ''}
+                                            title="${u.isBlocked ? 'Desbloquear' : 'Bloquear'}">
+                                        <i data-lucide="${u.isBlocked ? 'unlock' : 'lock'}"></i>
+                                    </button>
+                                    <button class="btn-action btn-delete-user" 
+                                            style="background: rgba(255, 68, 68, 0.1); color: #ff4444; border-color: rgba(255, 68, 68, 0.2);"
+                                            onclick="window.appAskDeleteUser('${u.email}')"
+                                            ${u.email === state.user.email ? 'disabled style="opacity: 0.3; cursor: not-allowed;"' : ''}
+                                            title="Excluir Definitivamente">
+                                        <i data-lucide="trash-2"></i>
+                                    </button>
+                                </div>
                             </td>
                         </tr>
                     `).join('')}
