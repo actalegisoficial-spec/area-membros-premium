@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Acta Members - Área de Membros Premium</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Outfit:wght@400;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="styles.css">
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- Supabase JS -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <!-- Canvas Confetti -->
+    <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
+</head>
+<body>
+    <!-- Auth logic: inline so it works regardless of app.js loading -->
+    <script>
+        // Screen switcher
+        window.appSwitchAuthTab = function(tab) {
+            ['login', 'signup', 'forgot'].forEach(function(t) {
+                var el = document.getElementById('auth-' + t);
+                if (el) el.style.display = (t === tab) ? 'block' : 'none';
+            });
+        };
+
+        function getSupabase() {
+            if (!window.supabaseClient) {
+                var url = 'https://cvqzsshhgzxmhbmafrui.supabase.co';
+                var key = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImN2cXpzc2hoZ3p4bWhibWFmcnVpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ0MDg2NjQsImV4cCI6MjA4OTk4NDY2NH0.Oqwzivjw9g7rcaJieZNHAw2dKwbQRLQhfWbD0WknxF8';
+                if (window.supabase && window.supabase.createClient) {
+                    window.supabaseClient = window.supabase.createClient(url, key);
+                }
+            }
+            return window.supabaseClient;
+        }
+
+        function showAuthMsg(id, msg, isError) {
+            var el = document.getElementById(id);
+            if (!el) return;
+            el.textContent = msg;
+            el.style.color = isError ? '#FF3B30' : '#2ECC71';
+        }
+
+        // LOGIN
+        window.doLogin = async function() {
+            var email = document.getElementById('login-email').value.trim().toLowerCase();
+            var password = document.getElementById('login-password').value;
+            var btn = document.getElementById('login-btn');
+            
+            if (!email || !password) { showAuthMsg('login-error', 'Preencha e-mail e senha.', true); return; }
+            var sb = getSupabase();
+            if (!sb) { showAuthMsg('login-error', 'Serviço não carregou. Recarregue a página.', true); return; }
+            
+            showAuthMsg('login-error', 'Entrando...', false);
+            if (btn) { btn.disabled = true; btn.textContent = 'Processando...'; }
+            
+            try {
+                // Timeout promise to avoid eternal hanging
+                var timeout = new Promise(function(_, reject) { setTimeout(function() { reject(new Error('A conexão com o servidor está muito lenta. Tente recarregar a página ou verifique sua internet.')); }, 25000); });
+                var loginReq = sb.auth.signInWithPassword({ email: email, password: password });
+                var result = await Promise.race([loginReq, timeout]);
+                
+                if (btn) { btn.disabled = false; btn.textContent = 'Entrar'; }
+                
+                if (result.error) {
+                    var msg = result.error.message;
+                    if (msg === 'Invalid login credentials' || msg === 'invalid_credentials') {
+                        showAuthMsg('login-error', 'E-mail ou senha incorretos.', true);
+                    } else if (msg === 'Email not confirmed') {
+                        showAuthMsg('login-error', 'Confirme seu e-mail antes de entrar.', true);
+                    } else {
+                        showAuthMsg('login-error', 'Erro do servidor: ' + msg, true);
+                    }
+                } else {
+                    showAuthMsg('login-error', '✓ Login realizado! Entrando...', false);
+                    setTimeout(function() { window.location.reload(); }, 500);
+                }
+            } catch(e) {
+                if (btn) { btn.disabled = false; btn.textContent = 'Entrar'; }
+                showAuthMsg('login-error', 'Erro: ' + e.message, true);
+            }
+        };
+
+        // SIGNUP
+        window.doSignup = async function() {
+            var name = document.getElementById('signup-name').value.trim();
+            var email = document.getElementById('signup-email').value.trim().toLowerCase();
+            var password = document.getElementById('signup-password').value;
+            if (!name || !email || !password) { showAuthMsg('signup-error', 'Preencha todos os campos.', true); return; }
+            if (password.length < 6) { showAuthMsg('signup-error', 'Senha deve ter mínimo 6 caracteres.', true); return; }
+            var sb = getSupabase();
+            if (!sb) { showAuthMsg('signup-error', 'Serviço não carregou. Recarregue a página.', true); return; }
+            showAuthMsg('signup-error', 'Criando conta...', false);
+            try {
+                var result = await sb.auth.signUp({ email: email, password: password, options: { data: { full_name: name } } });
+                console.log('Signup result:', result);
+                if (result.error) {
+                    showAuthMsg('signup-error', result.error.message, true);
+                } else {
+                    showAuthMsg('signup-error', '✓ Conta criada! Bem-vindo(a)!', false);
+                    setTimeout(function() { window.location.reload(); }, 2000);
+                }
+            } catch(e) {
+                showAuthMsg('signup-error', 'Erro: ' + e.message, true);
+            }
+        };
+
+        // ESQUECI A SENHA
+        window.doForgot = async function() {
+            var email = document.getElementById('forgot-email').value.trim().toLowerCase();
+            if (!email) { showAuthMsg('forgot-error', 'Digite seu e-mail.', true); return; }
+            var sb = getSupabase();
+            if (!sb) { showAuthMsg('forgot-error', 'Serviço não carregou. Recarregue a página.', true); return; }
+            showAuthMsg('forgot-error', 'Enviando...', false);
+            try {
+                var result = await sb.auth.resetPasswordForEmail(email);
+                if (result.error) {
+                    showAuthMsg('forgot-error', result.error.message, true);
+                } else {
+                    showAuthMsg('forgot-success', '✓ Link enviado para o seu e-mail!', false);
+                    showAuthMsg('forgot-error', '', false);
+                }
+            } catch(e) {
+                showAuthMsg('forgot-error', 'Erro: ' + e.message, true);
+            }
+        };
+    </script>
+    <div id="app">
+        <!-- Auth View -->
+        <div id="login-view" class="view active">
+            <div class="login-container">
+                <div class="login-header">
+                    <img src="logo-acta.png" alt="Acta Members Logo" class="brand-logo">
+                    <h1 class="brand-title">Acta Members</h1>
+                    <p class="brand-subtitle">Seu ambiente de evolução e conquistas</p>
+                </div>
+                <div class="premium-card" id="auth-card">
+
+                    <!-- TELA: LOGIN -->
+                    <div id="auth-login" class="auth-screen">
+                        <h2>Entrar na Plataforma</h2>
+                        <div class="form-group">
+                                <label for="login-email">E-mail</label>
+                                <input type="email" id="login-email" placeholder="seu@email.com" autocomplete="email">
+                            </div>
+                            <div class="form-group">
+                                <label for="login-password">Senha</label>
+                                <input type="password" id="login-password" placeholder="••••••••" autocomplete="current-password">
+                            </div>
+                            <button type="button" id="login-btn" class="btn btn-primary btn-block" onclick="doLogin()">Entrar</button>
+                            <div style="text-align:center; color:gray; font-size:10px; margin-top:10px;">Versão 1.1</div>
+                            <p id="login-error" class="auth-error"></p>
+
+                        <div class="auth-links">
+                            <button type="button" class="auth-link-btn" onclick="window.appSwitchAuthTab('forgot')">Esqueci minha senha</button>
+                            <span>•</span>
+                            <button type="button" class="auth-link-btn" onclick="window.appSwitchAuthTab('signup')">Criar uma conta</button>
+                        </div>
+                    </div>
+
+                    <!-- TELA: CADASTRO -->
+                    <div id="auth-signup" class="auth-screen" style="display:none;">
+                        <h2>Criar sua Conta</h2>
+                        <div class="form-group">
+                                <label for="signup-name">Nome Completo</label>
+                                <input type="text" id="signup-name" placeholder="Seu nome completo" autocomplete="name">
+                            </div>
+                            <div class="form-group">
+                                <label for="signup-email">E-mail</label>
+                                <input type="email" id="signup-email" placeholder="seu@email.com" autocomplete="email">
+                            </div>
+                            <div class="form-group">
+                                <label for="signup-password">Senha</label>
+                                <input type="password" id="signup-password" placeholder="Mínimo 6 caracteres" autocomplete="new-password">
+                            </div>
+                            <button type="button" id="signup-btn" class="btn btn-primary btn-block" onclick="doSignup()">Criar Conta</button>
+                            <p id="signup-error" class="auth-error"></p>
+
+                        <div class="auth-links">
+                            <button type="button" class="auth-link-btn" onclick="window.appSwitchAuthTab('login')">← Voltar para o Login</button>
+                        </div>
+                    </div>
+
+                    <!-- TELA: RECUPERAR SENHA -->
+                    <div id="auth-forgot" class="auth-screen" style="display:none;">
+                        <h2>Recuperar Senha</h2>
+                        <p style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 25px;">Digite seu e-mail e enviaremos um link para redefinir sua senha.</p>
+                        <div class="form-group">
+                                <label for="forgot-email">E-mail</label>
+                                <input type="email" id="forgot-email" placeholder="seu@email.com" autocomplete="email">
+                            </div>
+                            <button type="button" id="forgot-btn" class="btn btn-primary btn-block" onclick="doForgot()">Enviar Link de Recuperação</button>
+                            <p id="forgot-error" class="auth-error"></p>
+                            <p id="forgot-success" class="auth-success"></p>
+                        <div class="auth-links">
+                            <button type="button" class="auth-link-btn" onclick="window.appSwitchAuthTab('login')">← Voltar para o Login</button>
+                        </div>
+                    </div>
+
+
+                </div>
+
+            </div>
+        </div>
+
+        <!-- Main App Layout (Hidden by default) -->
+        <div id="main-layout" class="view">
+            <nav class="sidebar">
+                <div class="sidebar-header">
+                    <img src="logo-acta.png" alt="Acta Logo" class="sidebar-logo">
+                    <span class="logo-text">Acta Members</span>
+                </div>
+                <ul class="nav-links">
+                    <li class="nav-item active" data-view="dashboard">
+                        <i data-lucide="layout-dashboard"></i> <span>Início</span>
+                    </li>
+                    <li class="nav-item" data-view="perfil">
+                        <i data-lucide="user"></i> <span>Meu Perfil</span>
+                    </li>
+                    <li class="nav-item" data-view="progress">
+                        <i data-lucide="check-circle"></i> <span>Meu Progresso</span>
+                    </li>
+                    <li class="nav-item" data-view="ranking">
+                        <i data-lucide="trophy"></i> <span>Ranking</span>
+                    </li>
+                    <li class="nav-item" data-view="community">
+                        <i data-lucide="users"></i> <span>Comunidade</span>
+                    </li>
+                    <li class="nav-item" data-view="servicos">
+                        <i data-lucide="briefcase"></i> <span>Serviços</span>
+                    </li>
+                    <li class="nav-item" data-view="mural">
+                        <i data-lucide="image"></i> <span>Mural</span>
+                    </li>
+                    <li class="nav-item admin-only" data-view="users" style="display: none;">
+                        <i data-lucide="users-round"></i> <span>Usuários</span>
+                    </li>
+                </ul>
+                <div class="sidebar-footer">
+                    <button id="logout-btn" class="btn-icon"><i data-lucide="log-out"></i> Sair</button>
+                </div>
+            </nav>
+
+            <main class="content-area">
+                <header class="top-bar">
+                    <div class="user-greeting">
+                        <span id="greeting-text">Olá, Aluno!</span>
+                    </div>
+                    <div class="points-badge">
+                        <i data-lucide="landmark"></i> <span id="header-points">0 pts</span>
+                    </div>
+                </header>
+
+                <div id="dashboard-view" class="sub-view active">
+                    <!-- Dashboard content injected via JS -->
+                </div>
+                <div id="progress-view" class="sub-view">
+                    <!-- Progress marks content -->
+                </div>
+                <div id="ranking-view" class="sub-view">
+                    <!-- Ranking content -->
+                </div>
+                <div id="community-view" class="sub-view">
+                    <!-- Community tabs content -->
+                </div>
+                <div id="servicos-view" class="sub-view">
+                    <!-- Services content -->
+                </div>
+                <div id="mural-view" class="sub-view">
+                    <!-- Mural content -->
+                </div>
+                <div id="users-view" class="sub-view">
+                    <!-- Users content -->
+                </div>
+                <div id="perfil-view" class="sub-view">
+                    <!-- Perfil content injected via JS -->
+                </div>
+            </main>
+
+            <!-- Mobile Navbar -->
+            <nav class="mobile-nav">
+                <div class="mobile-nav-item active" data-view="dashboard"><i data-lucide="home"></i></div>
+                <div class="mobile-nav-item" data-view="perfil"><i data-lucide="user"></i></div>
+                <div class="mobile-nav-item" data-view="progress"><i data-lucide="check-circle"></i></div>
+                <div class="mobile-nav-item" data-view="ranking"><i data-lucide="trophy"></i></div>
+                <div class="mobile-nav-item" data-view="community"><i data-lucide="users"></i></div>
+                <div class="mobile-nav-item" data-view="servicos"><i data-lucide="briefcase"></i></div>
+                <div class="mobile-nav-item" data-view="mural"><i data-lucide="image"></i></div>
+                <div class="mobile-nav-item admin-only" data-view="users" style="display: none;"><i data-lucide="users-round"></i></div>
+            </nav>
+        </div>
+    </div>
+    <!-- Custom Modal -->
+    <div id="custom-modal" class="modal-overlay">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="modal-title">Título</h3>
+                <button class="btn-close-modal" onclick="window.appCloseModal()">&times;</button>
+            </div>
+            <div id="modal-body" class="modal-body">
+                <!-- Conteúdo dinâmico -->
+            </div>
+            <div class="modal-footer">
+                <button class="btn-secondary" onclick="window.appCloseModal()">Cancelar</button>
+                <button id="modal-confirm-btn" class="btn-primary">Confirmar</button>
+            </div>
+        </div>
+    </div>
+    <!-- Toast Container -->
+    <div id="toast-container"></div>
+
+    <script src="app.js?v=1.1"></script>
+</body>
+</html>
