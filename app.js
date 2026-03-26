@@ -383,6 +383,22 @@ async function showMainApp() {
             return;
         }
 
+        // 1. FETCH PROFILE FIRST (Security Check)
+        const { data: profile, error: dbError } = await sb.from('users').select('*').eq('email', user.email).maybeSingle();
+        
+        if (profile && profile.is_blocked) {
+            await sb.auth.signOut();
+            localStorage.clear();
+            const errorEl = document.getElementById('login-error');
+            if (errorEl) {
+                errorEl.innerText = 'Seu acesso foi bloqueado, para mais informações entre em contato com o suporte';
+                errorEl.style.display = 'block';
+                errorEl.style.color = '#ff4444';
+            }
+            window.appShowToast('Acesso negado: Usuário bloqueado.', 'error');
+            return;
+        }
+
         const ownerEmail = 'charlesnunes77@yahoo.com.br'.toLowerCase();
         const userEmail = user.email.toLowerCase();
         const isOwner = userEmail === ownerEmail; // Estritamente logado como dono
@@ -393,88 +409,49 @@ async function showMainApp() {
 
         state.user = { 
             email: userEmail, 
-            name: user.user_metadata.full_name || userEmail.split('@')[0], 
-            isModerator: isOwner 
+            name: (profile && profile.name) || user.user_metadata.full_name || userEmail.split('@')[0], 
+            isModerator: (profile && profile.role === 'Administrador') || isOwner 
         };
-        console.log('Acta Members: Admin Status:', isOwner);
+
+        if (profile) {
+            state.points = profile.points || 0;
+            const completedIds = profile.completed_activities || [];
+            state.activities.forEach(a => { a.completed = completedIds.includes(a.id); });
+        } else {
+            // Create profile if missing (resilience)
+            const newProfile = {
+                id: user.id, email: user.email,
+                name: state.user.name, profession: 'Estudante',
+                joined_date: new Date().toLocaleDateString('pt-BR'),
+                role: isOwner ? 'Administrador' : 'Aluno',
+                points: 0, completed_activities: []
+            };
+            await sb.from('users').upsert(newProfile, { onConflict: 'email' });
+        }
 
         document.getElementById('login-view').classList.remove('active');
         document.getElementById('main-layout').classList.add('active');
 
-        // 2. FORCE ADMIN TAB VISIBILITY BEFORE DB CALLS
+        // Force Admin Tabs
         document.querySelectorAll('.admin-only').forEach(el => {
-            el.style.display = isOwner ? (el.tagName === 'LI' ? 'flex' : 'block') : 'none';
+            el.style.display = state.user.isModerator ? (el.tagName === 'LI' ? 'flex' : 'block') : 'none';
         });
 
+        updateLevel();
         updateGlobalUI();
         switchSubView('dashboard');
 
-        // 3. BACKGROUND: FETCH DB PROFILE (NON-BLOCKING)
+        // 3. BACKGROUND: FETCH ALL USERS FOR RANKING/ADMIN
         (async () => {
             try {
-                // Fetch ALL Users for Ranking
                 const { data: allUsers } = await sb.from('users').select('*');
                 if (allUsers) {
-                    state.allUsers = allUsers;
+                    state.allUsers = allUsers.map(u => ({
+                        ...u,
+                        isBlocked: u.is_blocked === true
+                    }));
                     renderRanking();
                     renderUsers();
-                }
-
-                // Fetch or Create My Profile
-                let profile = state.allUsers.find(u => u.email === user.email);
-                if (!profile) {
-                    const { data } = await sb.from('users').select('*').eq('email', user.email).maybeSingle();
-                    profile = data;
-                }
-
-                if (profile) {
-                    state.user.name = profile.name || state.user.name;
-                    // Auto-fix Visual: Se o dono estiver como "Aluno" no banco, força Administrador no App
-                    if (isOwner && profile.role !== 'Administrador') {
-                        profile.role = 'Administrador';
-                        console.log('Acta Members: Forçando cargo de Administrador para o Dono.');
-                        // Tenta corrigir no banco (pode falhar por RLS, mas o UI fica certo)
-                        sb.from('users').update({ role: 'Administrador' }).eq('email', user.email).then();
-                    }
-                    state.user.isModerator = profile.role === 'Administrador' || isOwner;
-                    state.points = profile.points || 0;
-                    const completedIds = profile.completed_activities || [];
-                    state.activities.forEach(a => { a.completed = completedIds.includes(a.id); });
-                } else {
-                    console.log('Acta Members: Criando novo perfil para', user.email);
-                    const newProfile = {
-                        id: user.id,
-                        email: user.email,
-                        name: state.user.name || userEmail.split('@')[0],
-                        profession: 'Estudante',
-                        joined_date: new Date().toLocaleDateString('pt-BR'),
-                        role: isOwner ? 'Administrador' : 'Aluno',
-                        points: 0,
-                        completed_activities: []
-                    };
-                    
-                    try {
-                        let { data: created, error: upsertError } = await sb.from('users').upsert(newProfile, { onConflict: 'email' }).select().maybeSingle();
-                        
-                        // FALLBACK: Se falhar (ex: RLS bloqueando 'Administrador'), tenta criar como 'Aluno'
-                        if (upsertError && isOwner) {
-                            console.warn('Acta Members: Falha ao criar como Admin (RLS?). Tentando como Aluno...');
-                            newProfile.role = 'Aluno';
-                            const fallback = await sb.from('users').upsert(newProfile, { onConflict: 'email' }).select().maybeSingle();
-                            created = fallback.data;
-                            if (fallback.error) console.error('Acta Members: Falha total na criação do perfil:', fallback.error);
-                        }
-
-                        if (created) {
-                            state.points = created.points || 0;
-                            if (!state.allUsers.find(u => u.email === created.email)) state.allUsers.push(created);
-                            console.log('Acta Members: Perfil sincronizado com sucesso.');
-                        } else {
-                            console.warn('Acta Members: Perfil não foi retornado pelo banco (sem erro crítico).');
-                        }
-                    } catch (upsertCatch) {
-                        console.error('Acta Members: Exceção no upsert:', upsertCatch);
-                    }
                 }
                 updateLevel();
                 updateGlobalUI();
@@ -1633,6 +1610,7 @@ window.appToggleUserBlock = (email) => {
     appShowModal('Confirmar Ação', body, async () => {
         user.isBlocked = !user.isBlocked;
         await saveState(email);
+        window.appShowToast(user.isBlocked ? 'Usuário bloqueado com sucesso!' : 'Usuário desbloqueado!', 'success');
         renderUsers();
         appCloseModal();
     });
