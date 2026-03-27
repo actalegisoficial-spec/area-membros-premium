@@ -354,21 +354,14 @@ function setupEventListeners() {
     }
 
     // --- LOGOUT ---
-    window.doLogout = async () => {
-        await sb.auth.signOut();
-        localStorage.clear();
-        location.reload();
-    };
-
     const logoutBtn = document.getElementById('logout-btn');
     if (logoutBtn) {
-        logoutBtn.onclick = window.doLogout;
+        logoutBtn.onclick = async () => {
+            await sb.auth.signOut();
+            localStorage.clear();
+            location.reload();
+        };
     }
-
-    // Mobile logout binding
-    document.querySelectorAll('.btn-logout-mobile').forEach(btn => {
-        btn.onclick = window.doLogout;
-    });
 
     document.querySelectorAll('.nav-item, .mobile-nav-item').forEach(item => {
         item.onclick = () => {
@@ -390,22 +383,6 @@ async function showMainApp() {
             return;
         }
 
-        // 1. FETCH PROFILE FIRST (Security Check)
-        const { data: profile, error: dbError } = await sb.from('users').select('*').eq('email', user.email).maybeSingle();
-        
-        if (profile && profile.is_blocked) {
-            await sb.auth.signOut();
-            localStorage.clear();
-            const errorEl = document.getElementById('login-error');
-            if (errorEl) {
-                errorEl.innerText = 'Seu acesso foi bloqueado, para mais informações entre em contato com o suporte';
-                errorEl.style.display = 'block';
-                errorEl.style.color = '#ff4444';
-            }
-            window.appShowToast('Acesso negado: Usuário bloqueado.', 'error');
-            return;
-        }
-
         const ownerEmail = 'charlesnunes77@yahoo.com.br'.toLowerCase();
         const userEmail = user.email.toLowerCase();
         const isOwner = userEmail === ownerEmail; // Estritamente logado como dono
@@ -416,49 +393,68 @@ async function showMainApp() {
 
         state.user = { 
             email: userEmail, 
-            name: (profile && profile.name) || user.user_metadata.full_name || userEmail.split('@')[0], 
-            isModerator: (profile && profile.role === 'Administrador') || isOwner 
+            name: user.user_metadata.full_name || userEmail.split('@')[0], 
+            isModerator: isOwner 
         };
-
-        if (profile) {
-            state.points = profile.points || 0;
-            const completedIds = profile.completed_activities || [];
-            state.activities.forEach(a => { a.completed = completedIds.includes(a.id); });
-        } else {
-            // Create profile if missing (resilience)
-            const newProfile = {
-                id: user.id, email: user.email,
-                name: state.user.name, profession: 'Estudante',
-                joined_date: new Date().toLocaleDateString('pt-BR'),
-                role: isOwner ? 'Administrador' : 'Aluno',
-                points: 0, completed_activities: []
-            };
-            await sb.from('users').upsert(newProfile, { onConflict: 'email' });
-        }
+        console.log('Acta Members: Admin Status:', isOwner);
 
         document.getElementById('login-view').classList.remove('active');
         document.getElementById('main-layout').classList.add('active');
 
-        // Force Admin Tabs
+        // 2. FORCE ADMIN TAB VISIBILITY BEFORE DB CALLS
         document.querySelectorAll('.admin-only').forEach(el => {
-            el.style.display = state.user.isModerator ? (el.tagName === 'LI' ? 'flex' : 'block') : 'none';
+            el.style.display = isOwner ? (el.tagName === 'LI' ? 'flex' : 'block') : 'none';
         });
 
-        updateLevel();
         updateGlobalUI();
         switchSubView('dashboard');
 
-        // 3. BACKGROUND: FETCH ALL USERS FOR RANKING/ADMIN
+        // 3. BACKGROUND: FETCH DB PROFILE (NON-BLOCKING)
         (async () => {
             try {
+                // Fetch ALL Users for Ranking
                 const { data: allUsers } = await sb.from('users').select('*');
                 if (allUsers) {
-                    state.allUsers = allUsers.map(u => ({
-                        ...u,
-                        isBlocked: u.is_blocked === true
-                    }));
+                    state.allUsers = allUsers;
                     renderRanking();
                     renderUsers();
+                }
+
+                // Fetch or Create My Profile
+                let profile = state.allUsers.find(u => u.email === user.email);
+                if (!profile) {
+                    const { data } = await sb.from('users').select('*').eq('email', user.email).maybeSingle();
+                    profile = data;
+                }
+
+                if (profile) {
+                    state.user.name = profile.name || state.user.name;
+                    // Auto-fix Visual: Se o dono estiver como "Aluno" no banco, força Administrador no App
+                    if (isOwner && profile.role !== 'Administrador') {
+                        profile.role = 'Administrador';
+                        // Tenta corrigir no banco (pode falhar por RLS, mas o UI fica certo)
+                        sb.from('users').update({ role: 'Administrador' }).eq('email', user.email).then();
+                    }
+                    state.user.isModerator = profile.role === 'Administrador' || isOwner;
+                    state.points = profile.points || 0;
+                    const completedIds = profile.completed_activities || [];
+                    state.activities.forEach(a => { a.completed = completedIds.includes(a.id); });
+                } else {
+                    const newProfile = {
+                        id: user.id, // Vínculo obrigatório com Auth para o RLS funcionar
+                        email: user.email,
+                        name: state.user.name,
+                        profession: 'Estudante',
+                        joined_date: new Date().toLocaleDateString('pt-BR'),
+                        role: isOwner ? 'Administrador' : 'Aluno',
+                        points: 0,
+                        completed_activities: []
+                    };
+                    const { data: created } = await sb.from('users').upsert(newProfile, { onConflict: 'email' }).select().maybeSingle();
+                    if (created) {
+                        state.points = created.points || 0;
+                        if (!state.allUsers.find(u => u.email === created.email)) state.allUsers.push(created);
+                    }
                 }
                 updateLevel();
                 updateGlobalUI();
@@ -652,50 +648,46 @@ window.appToggleActivity = (id) => {
     renderRanking(); // Keep ranking position in sync after activity/points change
 };
 
-async function saveState(emailToSave = null) {
-    const targetEmail = emailToSave || (state.user ? state.user.email : null);
-    if (!targetEmail) return;
-
+async function saveState() {
+    if (!state.user || !state.user.email) return;
     try {
-        const u = state.allUsers.find(x => x.email === targetEmail);
-        if (!u) return;
-
-        // Se é o próprio usuário logado, sincroniza estado local
-        if (targetEmail === state.user.email) {
-            const completedIds = state.activities.filter(a => a.completed).map(a => a.id);
-            u.points = state.points;
-            u.completed_activities = completedIds;
-            
-            const localData = {
-                points: state.points,
-                completed_activities: completedIds,
-                name: u.name, profession: u.profession, phone: u.phone, city: u.city, photo: u.photo
-            };
-            localStorage.setItem(`progress_${targetEmail}`, JSON.stringify(localData));
+        const u = state.allUsers.find(x => x.email === state.user.email);
+        const completedIds = state.activities.filter(a => a.completed).map(a => a.id);
+        
+        // Sempre salva LocalStorage como fallback
+        const localData = {
+            points: state.points,
+            completed_activities: completedIds
+        };
+        if (u) {
+            localData.name = u.name;
+            localData.profession = u.profession;
+            localData.phone = u.phone;
+            localData.city = u.city;
+            localData.photo = u.photo;
         }
+        localStorage.setItem(`progress_${state.user.email}`, JSON.stringify(localData));
 
-        // Persiste no Supabase
-        const { error } = await sb.from('users').update({ 
-            points: u.points, 
-            completed_activities: u.completed_activities || [],
-            name: u.name, 
-            profession: u.profession, 
-            phone: u.phone, 
-            city: u.city, 
-            address: u.address,
-            photo: u.photo,
-            role: u.role,
-            is_blocked: u.isBlocked === true
-        }).eq('email', targetEmail);
-
-        if (error) {
-            console.error('Acta Members: Erro ao salvar no banco:', error);
-            if (state.user.isModerator) {
-                window.appShowToast('Erro de permissão! Rode o SQL v1.4 no Supabase.', 'error');
+        if (u) {
+            const { error } = await sb.from('users').update({ 
+                points: state.points, completed_activities: completedIds,
+                name: u.name, profession: u.profession, phone: u.phone, city: u.city, photo: u.photo
+            }).eq('email', state.user.email);
+            if (error) {
+                if (state.user.email === 'charlesnunes77@yahoo.com.br') {
+                    console.error('ERRO SUPABASE: Seu usuário Auth perdeu o vínculo com a tabela users.', error);
+                    window.appShowToast('Erro de Permissão (RLS). Veja o aviso que mandei no chat.', 'error');
+                }
+                throw error;
             }
+        } else {
+            const { error } = await sb.from('users').update({ 
+                points: state.points, completed_activities: completedIds
+            }).eq('email', state.user.email);
+            if (error) throw error;
         }
     } catch (e) {
-        console.error('Acta Members: Erro no saveState:', e);
+        console.error('Erro ao salvar no servidor (usando cache local):', e);
     }
 }
 
@@ -817,9 +809,9 @@ async function renderCommunity(selectedTheme = null, searchQuery = null) {
 
     // Tabs
     html += `
-        <div class="scroll-x-container" style="margin-bottom: 20px;">
+        <div style="display: flex; gap: 10px; overflow-x: auto; margin-bottom: 20px; padding: 10px 0;">
             ${tabs.map(t => `
-                <button class="btn" onclick="renderCommunity('${t}')" style="padding: 10px 20px; font-size: 0.95rem; background: ${selectedTheme === t && !searchQuery ? 'var(--gold)' : 'white'}; color: ${selectedTheme === t && !searchQuery ? 'black' : 'var(--navy-deep)'}; border: 1px solid #DDD; white-space: nowrap; font-weight: ${selectedTheme === t && !searchQuery ? '700' : '500'}; flex-shrink: 0;">
+                <button class="btn" onclick="renderCommunity('${t}')" style="padding: 10px 20px; font-size: 0.95rem; background: ${selectedTheme === t && !searchQuery ? 'var(--gold)' : 'white'}; color: ${selectedTheme === t && !searchQuery ? 'black' : 'var(--navy-deep)'}; border: 1px solid #DDD; white-space: nowrap; font-weight: ${selectedTheme === t && !searchQuery ? '700' : '500'};">
                     ${t}
                 </button>
             `).join('')}
@@ -855,12 +847,8 @@ async function renderCommunity(selectedTheme = null, searchQuery = null) {
                     ${filteredTopics.map(t => `
                         <div class="topic-item" onclick="window.appShowTopic(${t.id})">
                             <div class="topic-header">
-                                <div class="user-info-main" style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
-                                    <span style="white-space:nowrap;">[${t.theme}] Por</span>
-                                    <strong class="text-truncate" style="max-width: 140px;">${t.user_name || 'Desconhecido'}</strong> 
-                                    ${getUserRankBadge(t.user_name || '')}
-                                </div>
-                                <span style="font-size: 0.85rem; color: var(--text-muted); white-space: nowrap;">${new Date(t.created_at).toLocaleDateString('pt-BR')}</span>
+                                <span style="display: flex; align-items: center; gap: 8px;">[${t.theme}] Por <strong>${t.user_name || 'Desconhecido'}</strong> ${getUserRankBadge(t.user_name || '')}</span>
+                                <span>${new Date(t.created_at).toLocaleDateString('pt-BR')}</span>
                             </div>
                             <div class="topic-title">${t.title}</div>
                             <div class="topic-meta">
@@ -1039,13 +1027,11 @@ async function renderMural() {
                 const hasLiked = p.liked_by && p.liked_by.includes(state.user.email);
                 return `
                 <div class="card" style="border-top: 3px solid var(--gold); animation: fadeIn 0.5s ease-out;">
-                    <div class="topic-header" style="margin-bottom: 10px;">
-                        <div class="user-info-main" style="display: flex; align-items: center; gap: 10px;">
-                            <div style="width: 36px; height: 36px; border-radius: 50%; background: var(--gold); color: black; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 14px; flex-shrink: 0;">${p.user_name ? p.user_name.charAt(0).toUpperCase() : '?'}</div>
-                            <div style="display: flex; flex-direction: column; overflow: hidden;">
-                                <strong class="text-truncate">${p.user_name || 'Desconhecido'}</strong>
-                                ${getUserRankBadge(p.user_name || '')}
-                            </div>
+                    <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 5px;">
+                        <div style="width: 36px; height: 36px; border-radius: 50%; background: var(--gold); color: black; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 14px;">${p.user_name ? p.user_name.charAt(0).toUpperCase() : '?'}</div>
+                        <div style="display: flex; flex-direction: column;">
+                            <strong>${p.user_name || 'Desconhecido'}</strong>
+                            ${getUserRankBadge(p.user_name || '')}
                         </div>
                     </div>
                     <p style="font-size: 1rem; margin: 10px 0; color: #EEE;">${p.text}</p>
@@ -1110,23 +1096,6 @@ window.appToggleMuralLike = async (postId, btnElement) => {
         newLikedBy = [...post.liked_by, userEmail];
     }
 
-    // --- OTIMIZAÇÃO VISUAL INSTANTÂNEA ---
-    const isNowLiked = !hasLiked;
-    const heartIcon = btnElement.querySelector('i');
-    const likeCount = btnElement.querySelector('.like-count');
-    
-    if (heartIcon) {
-        heartIcon.style.fill = isNowLiked ? '#FF3B30' : 'none';
-        heartIcon.style.color = isNowLiked ? '#FF3B30' : 'var(--text-muted)';
-    }
-    if (likeCount) {
-        likeCount.innerText = newLikedBy.length;
-    }
-
-    // Atualiza estado local para persistência entre abas
-    post.liked_by = newLikedBy;
-    post.likes = newLikedBy.length;
-
     const { error } = await sb
         .from('mural_posts')
         .update({ 
@@ -1137,14 +1106,6 @@ window.appToggleMuralLike = async (postId, btnElement) => {
 
     if (error) {
         window.appShowToast('Erro ao curtir: ' + error.message, 'error');
-        // Reverter UI em caso de erro (opcional, mas bom para UX)
-        if (heartIcon) {
-            heartIcon.style.fill = hasLiked ? '#FF3B30' : 'none';
-            heartIcon.style.color = hasLiked ? '#FF3B30' : 'var(--text-muted)';
-        }
-        if (likeCount) {
-            likeCount.innerText = post.likes;
-        }
     }
 };
 
@@ -1214,13 +1175,10 @@ async function renderServicos(searchQuery = '') {
                 return `
                 <div class="card servico-card ${p.finalized ? 'status-finalized' : ''}">
                     <div class="servico-card-header">
-                        <div class="user-info-main" style="display: flex; align-items: center; gap: 10px; overflow: hidden;">
-                            ${userPhoto ? `<img src="${userPhoto}" style="width: 32px; height: 32px; border-radius: 50%; object-fit: cover; flex-shrink:0;">` : `<div style="width: 32px; height: 32px; border-radius: 50%; background: var(--gold); color: black; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 14px; flex-shrink:0;">${p.user_name ? p.user_name.charAt(0).toUpperCase() : '?'}</div>`}
-                            <div style="overflow: hidden; display: flex; flex-direction: column;">
-                                <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
-                                    <strong class="text-truncate">${p.user_name}</strong> 
-                                    ${getUserRankBadge(p.user_name)}
-                                </div>
+                        <div class="user-info" style="display: flex; align-items: center; gap: 10px;">
+                            ${userPhoto ? `<img src="${userPhoto}" style="width: 32px; height: 32px; border-radius: 50%; object-fit: cover;">` : `<div style="width: 32px; height: 32px; border-radius: 50%; background: var(--gold); color: black; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 14px;">${p.user_name ? p.user_name.charAt(0).toUpperCase() : '?'}</div>`}
+                            <div>
+                                <div style="display: flex; align-items: center; gap: 8px;"><strong>${p.user_name}</strong> ${getUserRankBadge(p.user_name)}</div>
                                 <span class="servico-date" style="display: block;">${new Date(p.created_at).toLocaleDateString('pt-BR')}</span>
                             </div>
                         </div>
@@ -1438,145 +1396,166 @@ function triggerConfetti() {
 // saveState foi unificado e movido para cima
 // loadState está definido acima também
 
-state.userSortCriteria = 'name'; // Default sorting
-
-window.appSortUsers = (criteria) => {
-    state.userSortCriteria = criteria;
-    renderUsers();
-};
-
-window.appAskDeleteUser = (email) => {
-    const user = state.allUsers.find(u => u.email === email);
-    if (!user) return;
-    if (email === state.user.email) {
-        window.appShowToast('Você não pode se excluir!', 'error');
-        return;
-    }
-
-    const body = `
-        <div style="text-align:center; padding: 20px;">
-            <i data-lucide="alert-triangle" style="width: 48px; height: 48px; color: #ff4444; margin-bottom: 15px;"></i>
-            <p>Deseja realmente <strong>EXCLUIR DEFINITIVAMENTE</strong> o aluno <strong>${user.name}</strong>?</p>
-            <p style="font-size: 0.8rem; color: #888; margin-top: 10px;">Esta ação não pode ser desfeita e removerá todos os pontos e progresso.</p>
-        </div>
-    `;
-
-    appShowModal('Confirmar Exclusão Crítica', body, async () => {
-        const { error } = await sb.from('users').delete().eq('email', email);
-        if (error) {
-            window.appShowToast('Erro ao excluir: ' + error.message, 'error');
-        } else {
-            state.allUsers = state.allUsers.filter(u => u.email !== email);
-            renderUsers();
-            renderRanking();
-            window.appShowToast('Usuário excluído com sucesso.', 'success');
-            appCloseModal();
-        }
-    });
-    refreshIcons();
-};
+// Estado de ordenação da lista de usuários
+var usersSort = { field: '_entry_order', asc: true };
 
 function renderUsers() {
     const view = document.getElementById('users-view');
     if (!view) return;
 
-    // Apply Sorting logic
-    let sortedUsers = [...state.allUsers];
-    if (state.userSortCriteria === 'name') {
-        sortedUsers.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
-    } else if (state.userSortCriteria === 'recent') {
-        // Assume joined_date is "DD/MM/YYYY" or valid date string
-        sortedUsers.sort((a, b) => {
-            const dateA = a.created_at ? new Date(a.created_at) : new Date(0);
-            const dateB = b.created_at ? new Date(b.created_at) : new Date(0);
-            return dateB - dateA;
-        });
-    } else if (state.userSortCriteria === 'points') {
-        sortedUsers.sort((a, b) => (b.points || 0) - (a.points || 0));
-    }
+    // Cria lista com índice de entrada original preservado
+    const withIndex = state.allUsers.map((u, idx) => ({ ...u, _entry_order: idx }));
+
+    // Ordenar lista
+    const sorted = [...withIndex].sort((a, b) => {
+        if (usersSort.field === '_entry_order') {
+            return usersSort.asc ? a._entry_order - b._entry_order : b._entry_order - a._entry_order;
+        }
+        let va = a[usersSort.field] || '';
+        let vb = b[usersSort.field] || '';
+        if (usersSort.field === 'points') { va = Number(va); vb = Number(vb); }
+        else { va = String(va).toLowerCase(); vb = String(vb).toLowerCase(); }
+        if (va < vb) return usersSort.asc ? -1 : 1;
+        if (va > vb) return usersSort.asc ? 1 : -1;
+        return 0;
+    });
+
+    const sortIcon = (field) => {
+        if (usersSort.field !== field) return ' <span style="opacity:0.4">↕</span>';
+        return usersSort.asc ? ' <span style="color:var(--gold)">↑</span>' : ' <span style="color:var(--gold)">↓</span>';
+    };
+    const thStyle = (field) => `cursor:pointer; user-select:none; white-space:nowrap; ${
+        usersSort.field === field ? 'color:var(--gold);' : ''
+    }`;
+    const thBtn = (field, label) =>
+        `<th style="${thStyle(field)}" onclick="window.appSortUsers('${field}')">${label}${sortIcon(field)}</th>`;
 
     view.innerHTML = `
         <div class="view-header">
             <h2>Gestão de Usuários</h2>
-            <p>Administre quem tem acesso e modifique profissões.</p>
-        </div>
-
-        <div style="margin-bottom: 20px; display: flex; gap: 15px; align-items: center; flex-wrap: wrap;">
-            <label style="color: var(--gold); font-size: 0.9rem; font-weight: 600;">Ordenar por:</label>
-            <select class="input-styled" style="width: auto; padding: 8px 15px;" onchange="window.appSortUsers(this.value)">
-                <option value="name" ${state.userSortCriteria === 'name' ? 'selected' : ''}>Nome (A-Z)</option>
-                <option value="recent" ${state.userSortCriteria === 'recent' ? 'selected' : ''}>Mais Recentes</option>
-                <option value="points" ${state.userSortCriteria === 'points' ? 'selected' : ''}>Nível / Pontos</option>
-            </select>
-            <span style="color: var(--text-muted); font-size: 0.85rem; margin-left: auto;">Total: ${sortedUsers.length} alunos</span>
+            <p>Clique nos cabeçalhos para ordenar. Administre acessos e cargos.</p>
         </div>
         
+        <div style="display:flex; gap:10px; margin-bottom:15px; flex-wrap:wrap; align-items:center;">
+            <span style="color:var(--text-muted); font-size:0.9rem;">Ordenar por:</span>
+            ${[['_entry_order','Ordem de Entrada'],['name','Nome'],['role','Cargo'],['points','Pontos'],['joined_date','Membro desde']].map(([f,l]) => `
+                <button class="btn" onclick="window.appSortUsers('${f}')" style="padding:6px 14px; font-size:0.85rem;
+                    background:${usersSort.field===f ? 'var(--gold)' : 'rgba(255,255,255,0.07)'};
+                    color:${usersSort.field===f ? 'black' : 'var(--white)'};
+                    border:1px solid ${usersSort.field===f ? 'var(--gold)' : 'rgba(255,255,255,0.15)'};
+                    border-radius:6px; cursor:pointer;">${l}${usersSort.field===f ? (usersSort.asc?' ↑':' ↓') : ''}</button>
+            `).join('')}
+        </div>
+
         <div class="card" style="padding: 0; overflow: hidden;">
             <div class="table-container">
                 <table class="premium-table">
                     <thead>
                         <tr>
-                            <th>Nome / E-mail</th>
-                        <th>Cargo</th>
-                        <th>Profissão</th>
-                        <th>Cidade</th>
-                        <th>Status</th>
-                        <th>Ações</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    ${sortedUsers.map(u => `
-                        <tr class="${u.isBlocked ? 'row-blocked' : ''}">
-                            <td>
-                                <div style="display: flex; align-items: center; gap: 10px;">
-                                    ${u.photo ? `<img src="${u.photo}" style="width: 36px; height: 36px; border-radius: 50%; object-fit: cover;">` : `<div style="width: 36px; height: 36px; border-radius: 50%; background: var(--gold); color: black; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 14px;">${u.name ? u.name.charAt(0).toUpperCase() : '?'}</div>`}
-                                    <div>
-                                        <strong>${u.name || 'Sem Nome'}</strong> ${u.email === state.user.email ? '<span class="badge-me">Você</span>' : ''}
-                                        <div style="margin-top: 4px;">${getUserRankBadge(u.email)}</div>
-                                        <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 4px;">${u.email}</div>
+                            ${thBtn('_entry_order', '#')}
+                            ${thBtn('name', 'Nome / E-mail')}
+                            ${thBtn('role', 'Cargo')}
+                            ${thBtn('profession', 'Profissão')}
+                            <th>Telefone</th>
+                            ${thBtn('city', 'Cidade')}
+                            ${thBtn('joined_date', 'Membro desde')}
+                            ${thBtn('isBlocked', 'Status')}
+                            <th style="text-align:center;">Verificado</th>
+                            <th>Ações</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${sorted.map((u, i) => `
+                            <tr class="${u.isBlocked ? 'row-blocked' : ''}">
+                                <td style="color:var(--text-muted); font-weight:700;">${u._entry_order + 1}</td>
+                                <td>
+                                    <div style="display: flex; align-items: center; gap: 10px;">
+                                        ${u.photo ? `<img src="${u.photo}" style="width: 36px; height: 36px; border-radius: 50%; object-fit: cover;">` : `<div style="width: 36px; height: 36px; border-radius: 50%; background: var(--gold); color: black; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 14px;">${u.name ? u.name.charAt(0).toUpperCase() : '?'}</div>`}
+                                        <div>
+                                            <strong>${u.name || '-'}</strong> ${u.email === state.user.email ? '<span class="badge-me">Você</span>' : ''}
+                                            <div style="margin-top: 4px;">${getUserRankBadge(u.email)}</div>
+                                            <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 4px;">${u.email}</div>
+                                        </div>
                                     </div>
-                                </div>
-                            </td>
-                            <td>
-                                <span class="badge-role ${u.role === 'Administrador' ? 'role-admin' : 'role-aluno'}">${u.role || 'Aluno'}</span>
-                                <button class="btn-edit-small" onclick="window.appToggleUserRole('${u.email}')" title="Mudar Cargo"><i data-lucide="refresh-cw"></i></button>
-                            </td>
-                            <td>
-                                <span class="prof-label">${u.profession || 'Estudante'}</span>
-                                <button class="btn-edit-small" onclick="window.appChangeProfession('${u.email}')" title="Editar Profissão"><i data-lucide="edit-3"></i></button>
-                            </td>
-                            <td>${u.city || '-'}</td>
-                            <td>
-                                <span class="status-indicator ${u.isBlocked ? 'status-blocked' : 'status-active'}">
-                                    ${u.isBlocked ? 'Bloqueado' : 'Ativo'}
-                                </span>
-                            </td>
-                            <td>
-                                <div style="display: flex; gap: 8px;">
+                                </td>
+                                <td>
+                                    <span class="badge-role ${u.role === 'Administrador' ? 'role-admin' : 'role-aluno'}">${u.role || 'Aluno'}</span>
+                                    <button class="btn-edit-small" onclick="window.appToggleUserRole('${u.email}')"><i data-lucide="refresh-cw"></i></button>
+                                </td>
+                                <td>
+                                    <span class="prof-label">${u.profession || '-'}</span>
+                                    <button class="btn-edit-small" onclick="window.appChangeProfession('${u.email}')"><i data-lucide="edit-3"></i></button>
+                                </td>
+                                <td>${u.phone || '-'}</td>
+                                <td>
+                                    <div>${u.city || '-'}</div>
+                                    <div style="font-size: 0.8rem; color: var(--text-muted);">${u.address || '-'}</div>
+                                </td>
+                                <td>${u.joined_date || '-'}</td>
+                                <td>
+                                    <span class="status-indicator ${u.isBlocked ? 'status-blocked' : 'status-active'}">
+                                        ${u.isBlocked ? 'Bloqueado' : 'Ativo'}
+                                    </span>
+                                </td>
+                                <td style="text-align:center;">
+                                    <button
+                                        onclick="window.appToggleVerified('${u.email}')"
+                                        title="${u.verified ? 'Clique para desmarcar' : 'Clique para marcar como verificado'}"
+                                        style="
+                                            width: 36px; height: 36px; border-radius: 50%; border: 2px solid;
+                                            border-color: ${u.verified ? '#34C759' : 'rgba(255,255,255,0.2)'};
+                                            background: ${u.verified ? 'rgba(52,199,89,0.15)' : 'transparent'};
+                                            color: ${u.verified ? '#34C759' : 'rgba(255,255,255,0.3)'};
+                                            font-size: 1.1rem; font-weight: 700; cursor: pointer;
+                                            display: inline-flex; align-items: center; justify-content: center;
+                                            transition: all 0.2s;
+                                        ">
+                                        ${u.verified ? '✓' : '–'}
+                                    </button>
+                                </td>
+                                <td>
                                     <button class="btn-action ${u.isBlocked ? 'btn-unblock' : 'btn-block-user'}" 
                                             onclick="window.appToggleUserBlock('${u.email}')"
-                                            ${u.email === state.user.email ? 'disabled style="opacity: 0.3; cursor: not-allowed;"' : ''}
-                                            title="${u.isBlocked ? 'Desbloquear' : 'Bloquear'}">
-                                        <i data-lucide="${u.isBlocked ? 'unlock' : 'lock'}"></i>
+                                            ${u.email === state.user.email ? 'disabled style="opacity: 0.3; cursor: not-allowed;"' : ''}>
+                                        ${u.isBlocked ? 'Desbloquear' : 'Bloquear'}
                                     </button>
-                                    <button class="btn-action btn-delete-user" 
-                                            style="background: rgba(255, 68, 68, 0.1); color: #ff4444; border-color: rgba(255, 68, 68, 0.2);"
-                                            onclick="window.appAskDeleteUser('${u.email}')"
-                                            ${u.email === state.user.email ? 'disabled style="opacity: 0.3; cursor: not-allowed;"' : ''}
-                                            title="Excluir Definitivamente">
-                                        <i data-lucide="trash-2"></i>
-                                    </button>
-                                </div>
-                            </td>
-                        </tr>
-                    `).join('')}
-                </tbody>
+                                </td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
                 </table>
             </div>
         </div>
     `;
     refreshIcons();
 }
+
+window.appToggleVerified = async (email) => {
+    const user = state.allUsers.find(u => u.email === email);
+    if (!user) return;
+    const newVal = !user.verified;
+    // Atualiza local imediatamente
+    user.verified = newVal;
+    renderUsers();
+    // Persiste no Supabase
+    const { error } = await sb.from('users').update({ verified: newVal }).eq('email', email);
+    if (error) {
+        console.warn('[Admin] Erro ao salvar verificado:', error.message);
+        // Reverte se falhar
+        user.verified = !newVal;
+        renderUsers();
+    }
+};
+
+window.appSortUsers = (field) => {
+    if (usersSort.field === field) {
+        usersSort.asc = !usersSort.asc;
+    } else {
+        usersSort.field = field;
+        usersSort.asc = true;
+    }
+    renderUsers();
+};
 
 // --- PERFIL ---
 function renderPerfil() {
@@ -1683,11 +1662,15 @@ window.appChangeProfession = (email) => {
     
     appShowModal('Editar Profissão', body, async () => {
         const newVal = document.getElementById('new-profession-input').value;
-        if (newVal) {
+        if (!newVal) return;
+        appCloseModal();
+        const { error } = await sb.from('users').update({ profession: newVal }).eq('email', email);
+        if (error) {
+            window.appShowToast('Erro ao atualizar profissão: ' + error.message, 'error');
+        } else {
             user.profession = newVal;
-            await saveState(email);
             renderUsers();
-            appCloseModal();
+            window.appShowToast('Profissão atualizada com sucesso!', 'success');
         }
     });
 };
@@ -1696,14 +1679,27 @@ window.appToggleUserRole = (email) => {
     const user = state.allUsers.find(u => u.email === email);
     if (!user || user.email === state.user.email) return;
     
-    const newRole = user.role === 'Administrador' ? 'Aluno' : 'Administrador';
-    const body = `<p>Deseja mudar o cargo de <strong>${user.name}</strong> para <strong>${newRole}</strong>?</p>`;
+    const currentRole = user.role || 'Aluno';
+    const newRole = currentRole === 'Administrador' ? 'Aluno' : 'Administrador';
+    const body = `<p>Deseja mudar o cargo de <strong>${user.name}</strong> de <strong>${currentRole}</strong> para <strong>${newRole}</strong>?</p>`;
     
     appShowModal('Alterar Cargo', body, async () => {
-        user.role = newRole;
-        await saveState(email);
-        renderUsers();
         appCloseModal();
+        console.log('[Admin] Atualizando cargo de', email, 'para', newRole);
+        const { data, error } = await sb
+            .from('users')
+            .update({ role: newRole })
+            .eq('email', email)
+            .select();
+        if (error) {
+            console.error('[Admin] Erro ao alterar cargo:', error);
+            window.appShowToast('Erro ao alterar cargo: ' + error.message + (error.details ? ' | ' + error.details : ''), 'error');
+        } else {
+            console.log('[Admin] Cargo atualizado com sucesso:', data);
+            user.role = newRole;
+            renderUsers();
+            window.appShowToast(`Cargo de ${user.name} alterado para ${newRole}.`, 'success');
+        }
     });
 };
 
@@ -1715,11 +1711,16 @@ window.appToggleUserBlock = (email) => {
     const body = `<p>Tem certeza que deseja <strong>${action}</strong> o acesso de <strong>${user.name}</strong>?</p>`;
     
     appShowModal('Confirmar Ação', body, async () => {
-        user.isBlocked = !user.isBlocked;
-        await saveState(email);
-        window.appShowToast(user.isBlocked ? 'Usuário bloqueado com sucesso!' : 'Usuário desbloqueado!', 'success');
-        renderUsers();
         appCloseModal();
+        const newBlocked = !user.isBlocked;
+        const { error } = await sb.from('users').update({ isBlocked: newBlocked }).eq('email', email);
+        if (error) {
+            window.appShowToast('Erro ao alterar status: ' + error.message, 'error');
+        } else {
+            user.isBlocked = newBlocked;
+            renderUsers();
+            window.appShowToast(`Usuário ${user.name} ${newBlocked ? 'bloqueado' : 'desbloqueado'} com sucesso.`, 'success');
+        }
     });
 };
 
