@@ -165,22 +165,40 @@ window.appSwitchAuthTab = (tab) => {
 };
 
 function setupRealtime() {
-    // Escutar mudanças no Mural
+
+    // --- Helpers de atualização cirúrgica ---
+    function applyPayloadToArray(arr, payload) {
+        const { eventType, new: newRow, old: oldRow } = payload;
+        if (eventType === 'INSERT') {
+            // Evita duplicatas
+            if (!arr.find(x => x.id === newRow.id)) arr.unshift(newRow);
+        } else if (eventType === 'UPDATE') {
+            const idx = arr.findIndex(x => x.id === newRow.id);
+            if (idx !== -1) arr[idx] = { ...arr[idx], ...newRow };
+            else arr.unshift(newRow);
+        } else if (eventType === 'DELETE') {
+            const idx = arr.findIndex(x => x.id === (oldRow && oldRow.id));
+            if (idx !== -1) arr.splice(idx, 1);
+        }
+    }
+
+    // --- MURAL ---
     sb
         .channel('public:mural_posts')
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'mural_posts' }, async () => {
-            const { data } = await sb.from('mural_posts').select('*').order('created_at', { ascending: false });
-            state.muralPosts = data || [];
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'mural_posts' }, (payload) => {
+            applyPayloadToArray(state.muralPosts, payload);
+            // Garante ordem decrescente por data
+            state.muralPosts.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
             if (document.getElementById('mural-view').classList.contains('active')) renderMural();
         })
         .subscribe();
 
-    // Escutar mudanças na Comunidade (Tópicos)
+    // --- COMUNIDADE: Tópicos ---
     sb
         .channel('public:community_topics')
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'community_topics' }, async () => {
-            const { data } = await sb.from('community_topics').select('*').order('created_at', { ascending: false });
-            state.communityTopics = data || [];
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'community_topics' }, (payload) => {
+            applyPayloadToArray(state.communityTopics, payload);
+            state.communityTopics.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
             if (document.getElementById('community-view').classList.contains('active')) {
                 const searchInput = document.getElementById('community-search');
                 renderCommunity(state.currentTheme || null, searchInput ? searchInput.value : null);
@@ -188,37 +206,59 @@ function setupRealtime() {
         })
         .subscribe();
 
-    // Escutar mudanças na Comunidade (Respostas)
+    // --- COMUNIDADE: Respostas (leve, apenas re-renderiza o tópico aberto) ---
     sb
         .channel('public:community_replies')
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'community_replies' }, async (payload) => {
-            if (state.currentTopicId) {
-                // If the user is currently looking at a topic, we might need to re-render it
-                if (payload.new && payload.new.topic_id === state.currentTopicId) {
-                    window.appShowTopic(state.currentTopicId);
-                }
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'community_replies' }, (payload) => {
+            if (state.currentTopicId && payload.new && payload.new.topic_id === state.currentTopicId) {
+                window.appShowTopic(state.currentTopicId);
             }
         })
         .subscribe();
 
-    // ESCUTAR MUDANÇAS NO RANKING (Tabela users)
+    // --- USUÁRIOS (maior otimização: zero SELECT extra) ---
     sb
         .channel('public:users')
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'users' }, async () => {
-            const { data } = await sb.from('users').select('*');
-            state.allUsers = data || [];
-            updateLevel();
-            updateGlobalUI();
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'users' }, (payload) => {
+            const { eventType, new: newRow, old: oldRow } = payload;
+
+            if (eventType === 'INSERT') {
+                if (newRow && !state.allUsers.find(u => u.email === newRow.email)) {
+                    state.allUsers.push(newRow);
+                }
+            } else if (eventType === 'UPDATE') {
+                if (newRow) {
+                    const idx = state.allUsers.findIndex(u => u.email === newRow.email);
+                    if (idx !== -1) {
+                        state.allUsers[idx] = { ...state.allUsers[idx], ...newRow };
+                    } else {
+                        state.allUsers.push(newRow);
+                    }
+                    // Se for o próprio usuário logado, atualiza pontos/nível/UI
+                    if (state.user && newRow.email === state.user.email) {
+                        state.points = newRow.points || state.points;
+                        updateLevel();
+                        updateGlobalUI();
+                    }
+                }
+            } else if (eventType === 'DELETE') {
+                if (oldRow) {
+                    const idx = state.allUsers.findIndex(u => u.email === oldRow.email);
+                    if (idx !== -1) state.allUsers.splice(idx, 1);
+                }
+            }
+
             if (document.getElementById('ranking-view').classList.contains('active')) renderRanking();
             if (document.getElementById('users-view').classList.contains('active')) renderUsers();
         })
         .subscribe();
-    // Escutar mudanças nos Serviços (Anúncios)
+
+    // --- SERVIÇOS: Anúncios ---
     sb
         .channel('public:servicos_posts')
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'servicos_posts' }, async () => {
-            const { data } = await sb.from('servicos_posts').select('*').order('created_at', { ascending: false });
-            state.servicosPosts = data || [];
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'servicos_posts' }, (payload) => {
+            applyPayloadToArray(state.servicosPosts, payload);
+            state.servicosPosts.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
             if (document.getElementById('servicos-view').classList.contains('active')) {
                 const searchInput = document.getElementById('servicos-search-input');
                 renderServicos(searchInput ? searchInput.value : '');
@@ -226,10 +266,10 @@ function setupRealtime() {
         })
         .subscribe();
 
-    // Escutar mudanças nos Serviços (Respostas)
+    // --- SERVIÇOS: Respostas (sem estado local, re-renderiza a view) ---
     sb
         .channel('public:servicos_replies')
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'servicos_replies' }, async () => {
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'servicos_replies' }, () => {
             if (document.getElementById('servicos-view').classList.contains('active')) {
                 const searchInput = document.getElementById('servicos-search-input');
                 renderServicos(searchInput ? searchInput.value : '');
@@ -532,6 +572,8 @@ function renderContent(viewId) {
 // --- COMPONENTES ---
 
 function renderDashboard() {
+    console.log('[Dashboard] Renderizando v1.5...');
+    try {
     const nextLevel = LEVELS[LEVELS.indexOf(state.level) + 1] || 'Limites Alcançados';
     
     let progressPercent = 0;
@@ -547,7 +589,7 @@ function renderDashboard() {
     dash.innerHTML = `
         <div class="view-header">
             <h2>Bem-vindo à sua Evolução</h2>
-            <p>“Você está evoluindo na regularização de imóveis. Continue.”</p>
+            <p>"Você está evoluindo na regularização de imóveis. Continue."</p>
         </div>
         <div class="dashboard-grid">
             <div class="card gold-border">
@@ -573,11 +615,54 @@ function renderDashboard() {
             <h3>Pronto para registrar mais um passo?</h3>
             <button class="btn btn-primary" style="margin-top: 15px;" onclick="window.appShowProgress()">Marcar Meu Progresso</button>
         </div>
+
+        <!-- ACESSO RÁPIDO -->
+        <div style="margin-top: 24px;">
+            <div class="card-title" style="margin-bottom: 14px; font-size: 0.85rem; letter-spacing: 1px; text-transform: uppercase; color: var(--text-muted);">Acesso Rápido</div>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 16px;">
+
+                <!-- Botão IA -->
+                <a href="https://chatgpt.com/g/g-69b9959b9c6481919f727e21df289ca4-charles-nunes-expert-1-0-para-alunos"
+                   target="_blank" rel="noopener noreferrer"
+                   style="text-decoration: none; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px;
+                          background: linear-gradient(135deg, #6a0dad 0%, #3b82f6 100%);
+                          border-radius: 16px; padding: 24px 16px; cursor: pointer;
+                          transition: transform 0.2s ease, box-shadow 0.2s ease; box-shadow: 0 4px 20px rgba(106,13,173,0.35);"
+                   onmouseover="this.style.transform='translateY(-4px)';this.style.boxShadow='0 8px 30px rgba(106,13,173,0.55)'"
+                   onmouseout="this.style.transform='translateY(0)';this.style.boxShadow='0 4px 20px rgba(106,13,173,0.35)'">
+                    <div style="font-size: 2.2rem;">🤖</div>
+                    <div style="color: white; font-weight: 700; font-size: 1rem; text-align: center;">IA do Charles</div>
+                    <div style="color: rgba(255,255,255,0.75); font-size: 0.8rem; text-align: center;">Tire suas dúvidas com o Expert</div>
+                </a>
+
+                <!-- Botão WhatsApp -->
+                <a href="https://chat.whatsapp.com/HYoaOsDq6x4HvfvQylgi4H?mode=gi_t"
+                   target="_blank" rel="noopener noreferrer"
+                   style="text-decoration: none; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px;
+                          background: linear-gradient(135deg, #128C7E 0%, #25D366 100%);
+                          border-radius: 16px; padding: 24px 16px; cursor: pointer;
+                          transition: transform 0.2s ease, box-shadow 0.2s ease; box-shadow: 0 4px 20px rgba(37,211,102,0.35);"
+                   onmouseover="this.style.transform='translateY(-4px)';this.style.boxShadow='0 8px 30px rgba(37,211,102,0.55)'"
+                   onmouseout="this.style.transform='translateY(0)';this.style.boxShadow='0 4px 20px rgba(37,211,102,0.35)'">
+                    <div style="font-size: 2.2rem;">💬</div>
+                    <div style="color: white; font-weight: 700; font-size: 1rem; text-align: center;">Grupo WhatsApp</div>
+                    <div style="color: rgba(255,255,255,0.75); font-size: 0.8rem; text-align: center;">Entre na comunidade exclusiva</div>
+                </a>
+
+            </div>
+        </div>
     `;
+    } catch(e) {
+        console.error('[Dashboard] Erro ao renderizar:', e);
+        const dash = document.getElementById('dashboard-view');
+        if (dash) dash.innerHTML = `<div class="card"><p style="color:#FF3B30;">Erro ao carregar o dashboard. Recarregue a página.</p></div>`;
+    }
 }
+
 window.appShowProgress = () => switchSubView('progress');
 
 function renderProgress() {
+
     const categories = ['Módulo Primeiros Passos', 'Presença Digital', 'Análise Documental', 'Análise do Caso Concreto', 'Prospecção Ativa', 'Faturamento Total (selecione apenas uma das opções)', 'Resultado'];
     const view = document.getElementById('progress-view');
     if (!view) return;
