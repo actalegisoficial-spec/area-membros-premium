@@ -1448,7 +1448,7 @@ function renderUsers() {
         </div>
 
         <div class="card" style="padding: 0; overflow: hidden;">
-            <div class="table-container">
+            <div class="table-container" id="users-table-container" style="overflow-x: auto; max-height: 70vh; overflow-y: auto;">
                 <table class="premium-table">
                     <thead>
                         <tr>
@@ -1459,20 +1459,29 @@ function renderUsers() {
                             <th>Telefone</th>
                             ${thBtn('city', 'Cidade')}
                             ${thBtn('joined_date', 'Membro desde')}
-                            ${thBtn('isBlocked', 'Status')}
+                            ${thBtn('is_blocked', 'Status')}
                             <th style="text-align:center;">Verificado</th>
                             <th>Ações</th>
                         </tr>
                     </thead>
                     <tbody>
-                        ${sorted.map((u, i) => `
-                            <tr class="${u.isBlocked ? 'row-blocked' : ''}">
+                        ${sorted.map((u, i) => {
+                            // Determina o estado visual do botão Verificado (3 estados)
+                            // null/undefined = neutro, true = verde ✓, false (após 1 clique) = vermelho ✗
+                            const verifiedState = u.verified === true ? 'yes' : (u.verified === false && u._verifiedTouched ? 'no' : 'neutral');
+                            const verBorder = u.verified===true ? '#34C759' : (u.verified===false ? '#FF3B30' : 'rgba(255,255,255,0.2)');
+                            const verBg = u.verified===true ? 'rgba(52,199,89,0.15)' : (u.verified===false ? 'rgba(255,59,48,0.12)' : 'transparent');
+                            const verColor = u.verified===true ? '#34C759' : (u.verified===false ? '#FF3B30' : 'rgba(255,255,255,0.3)');
+                            const verIcon = u.verified===true ? '✓' : (u.verified===false ? '✗' : '–');
+                            const verTitle = u.verified===true ? 'Verificado – clique para marcar como não verificado' : (u.verified===false ? 'Não verificado – clique para voltar ao neutro' : 'Sem status – clique para verificar');
+                            return `
+                            <tr class="${u.is_blocked ? 'row-blocked' : ''}">
                                 <td style="color:var(--text-muted); font-weight:700;">${u._entry_order + 1}</td>
                                 <td>
                                     <div style="display: flex; align-items: center; gap: 10px;">
-                                        ${u.photo ? `<img src="${u.photo}" style="width: 36px; height: 36px; border-radius: 50%; object-fit: cover;">` : `<div style="width: 36px; height: 36px; border-radius: 50%; background: var(--gold); color: black; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 14px;">${u.name ? u.name.charAt(0).toUpperCase() : '?'}</div>`}
+                                        ${u.photo ? `<img src="${u.photo}" style="width: 36px; height: 36px; border-radius: 50%; object-fit: cover;">` : `<div style="width: 36px; height: 36px; border-radius: 50%; background: var(--gold); color: black; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 14px; flex-shrink:0;">${u.name ? u.name.charAt(0).toUpperCase() : '?'}</div>`}
                                         <div>
-                                            <strong>${u.name || '-'}</strong> ${u.email === state.user.email ? '<span class="badge-me">Você</span>' : ''}
+                                            <strong style="cursor:pointer; text-decoration:underline dotted; color:var(--gold);" onclick="window.appShowUserHistory('${u.email}')" title="Ver histórico de ${u.name}">${u.name || '-'}</strong> ${u.email === state.user.email ? '<span class="badge-me">Você</span>' : ''}
                                             <div style="margin-top: 4px;">${getUserRankBadge(u.email)}</div>
                                             <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 4px;">${u.email}</div>
                                         </div>
@@ -1493,35 +1502,35 @@ function renderUsers() {
                                 </td>
                                 <td>${u.joined_date || '-'}</td>
                                 <td>
-                                    <span class="status-indicator ${u.isBlocked ? 'status-blocked' : 'status-active'}">
-                                        ${u.isBlocked ? 'Bloqueado' : 'Ativo'}
+                                    <span class="status-indicator ${u.is_blocked ? 'status-blocked' : 'status-active'}">
+                                        ${u.is_blocked ? 'Bloqueado' : 'Ativo'}
                                     </span>
                                 </td>
                                 <td style="text-align:center;">
                                     <button
                                         onclick="window.appToggleVerified('${u.email}')"
-                                        title="${u.verified ? 'Clique para desmarcar' : 'Clique para marcar como verificado'}"
+                                        title="${verTitle}"
                                         style="
-                                            width: 36px; height: 36px; border-radius: 50%; border: 2px solid;
-                                            border-color: ${u.verified ? '#34C759' : 'rgba(255,255,255,0.2)'};
-                                            background: ${u.verified ? 'rgba(52,199,89,0.15)' : 'transparent'};
-                                            color: ${u.verified ? '#34C759' : 'rgba(255,255,255,0.3)'};
+                                            width: 36px; height: 36px; border-radius: 50%; border: 2px solid ${verBorder};
+                                            background: ${verBg};
+                                            color: ${verColor};
                                             font-size: 1.1rem; font-weight: 700; cursor: pointer;
                                             display: inline-flex; align-items: center; justify-content: center;
                                             transition: all 0.2s;
                                         ">
-                                        ${u.verified ? '✓' : '–'}
+                                        ${verIcon}
                                     </button>
                                 </td>
-                                <td>
-                                    <button class="btn-action ${u.isBlocked ? 'btn-unblock' : 'btn-block-user'}" 
+                                <td style="white-space:nowrap;">
+                                    <button class="btn-action ${u.is_blocked ? 'btn-unblock' : 'btn-block-user'}" 
                                             onclick="window.appToggleUserBlock('${u.email}')"
                                             ${u.email === state.user.email ? 'disabled style="opacity: 0.3; cursor: not-allowed;"' : ''}>
-                                        ${u.isBlocked ? 'Desbloquear' : 'Bloquear'}
+                                        ${u.is_blocked ? 'Desbloquear' : 'Bloquear'}
                                     </button>
                                 </td>
                             </tr>
-                        `).join('')}
+                            `;
+                        }).join('')}
                     </tbody>
                 </table>
             </div>
@@ -1533,16 +1542,39 @@ function renderUsers() {
 window.appToggleVerified = async (email) => {
     const user = state.allUsers.find(u => u.email === email);
     if (!user) return;
-    const newVal = !user.verified;
-    // Atualiza local imediatamente
+
+    // Ciclo de 3 estados: null/undefined → true (verde ✓) → false (vermelho ✗) → null → ...
+    let newVal;
+    if (user.verified === null || user.verified === undefined) {
+        newVal = true;   // 1º clique: verde ✓
+    } else if (user.verified === true) {
+        newVal = false;  // 2º clique: vermelho ✗
+    } else {
+        newVal = null;   // 3º clique: volta ao neutro –
+    }
+
+    // Salva posição do scroll para não pular ao topo
+    const container = document.getElementById('users-table-container');
+    const scrollLeft = container ? container.scrollLeft : 0;
+    const scrollTop = container ? container.scrollTop : 0;
+
     user.verified = newVal;
     renderUsers();
-    // Persiste no Supabase
-    const { error } = await sb.from('users').update({ verified: newVal }).eq('email', email);
+
+    // Restaura posição do scroll
+    const containerAfter = document.getElementById('users-table-container');
+    if (containerAfter) {
+        containerAfter.scrollLeft = scrollLeft;
+        containerAfter.scrollTop = scrollTop;
+    }
+
+    // Persiste no Supabase (null salva como false no banco boolean)
+    const dbVal = newVal === null ? null : newVal;
+    const { error } = await sb.from('users').update({ verified: dbVal }).eq('email', email);
     if (error) {
         console.warn('[Admin] Erro ao salvar verificado:', error.message);
         // Reverte se falhar
-        user.verified = !newVal;
+        user.verified = user.verified === true ? null : (user.verified === false ? true : false);
         renderUsers();
     }
 };
@@ -1707,21 +1739,137 @@ window.appToggleUserBlock = (email) => {
     const user = state.allUsers.find(u => u.email === email);
     if (!user || user.email === state.user.email) return;
     
-    const action = user.isBlocked ? 'desbloquear' : 'bloquear';
+    const action = user.is_blocked ? 'desbloquear' : 'bloquear';
     const body = `<p>Tem certeza que deseja <strong>${action}</strong> o acesso de <strong>${user.name}</strong>?</p>`;
     
     appShowModal('Confirmar Ação', body, async () => {
         appCloseModal();
-        const newBlocked = !user.isBlocked;
-        const { error } = await sb.from('users').update({ isBlocked: newBlocked }).eq('email', email);
+        const newBlocked = !user.is_blocked;
+        const { error } = await sb.from('users').update({ is_blocked: newBlocked }).eq('email', email);
         if (error) {
             window.appShowToast('Erro ao alterar status: ' + error.message, 'error');
         } else {
-            user.isBlocked = newBlocked;
+            user.is_blocked = newBlocked;
             renderUsers();
             window.appShowToast(`Usuário ${user.name} ${newBlocked ? 'bloqueado' : 'desbloqueado'} com sucesso.`, 'success');
         }
     });
+};
+
+// --- HISTÓRICO DO USUÁRIO ---
+window.appShowUserHistory = async (email) => {
+    const user = state.allUsers.find(u => u.email === email);
+    if (!user) return;
+
+    // Mostrar modal com loading
+    appShowModal(
+        `📋 Histórico de ${user.name}`,
+        `<div style="text-align:center; padding: 20px; color: var(--gold);"><i data-lucide="loader" class="spin"></i> Carregando histórico...</div>`,
+        null
+    );
+    refreshIcons();
+
+    // Esconde o botão de confirmar pois é apenas visualização
+    const confirmBtn = document.getElementById('modal-confirm-btn');
+    if (confirmBtn) confirmBtn.style.display = 'none';
+
+    try {
+        // Busca em paralelo: tópicos criados, respostas dadas, posts no mural
+        const [topicsRes, repliesRes, muralRes] = await Promise.all([
+            sb.from('community_topics').select('id, title, theme, created_at').eq('user_email', email).order('created_at', { ascending: false }).limit(20),
+            sb.from('community_replies').select('id, text, created_at, topic_id').eq('user_email', email).order('created_at', { ascending: false }).limit(20),
+            sb.from('mural_posts').select('id, text, category, likes, created_at').eq('user_email', email).order('created_at', { ascending: false }).limit(20)
+        ]);
+
+        const topics = topicsRes.data || [];
+        const replies = repliesRes.data || [];
+        const muralPosts = muralRes.data || [];
+
+        const fmt = (d) => new Date(d).toLocaleDateString('pt-BR');
+        const truncate = (t, n=80) => t && t.length > n ? t.substring(0, n) + '...' : (t || '');
+
+        const sectionStyle = 'margin-bottom: 20px;';
+        const titleStyle = 'color: var(--gold); font-weight: 700; font-size: 1rem; margin: 0 0 10px 0; padding-bottom: 6px; border-bottom: 1px solid rgba(212,175,55,0.3);';
+        const itemStyle = 'padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.06); font-size: 0.9rem;';
+        const emptyStyle = 'color: var(--text-muted); font-style: italic; font-size: 0.85rem;';
+        const badgeStyle = (color) => `display:inline-block; padding:2px 8px; border-radius:10px; font-size:0.75rem; background:${color}; color:#fff; margin-right:6px;`;
+
+        let body = `<div style="max-height: 65vh; overflow-y: auto; padding-right: 4px;">`;
+
+        // Stats rápidas
+        body += `
+            <div style="display:flex; gap:12px; margin-bottom:20px; flex-wrap:wrap;">
+                <div style="flex:1; min-width:80px; text-align:center; background:rgba(212,175,55,0.1); border:1px solid rgba(212,175,55,0.3); border-radius:10px; padding:12px;">
+                    <div style="font-size:1.6rem; font-weight:800; color:var(--gold);">${topics.length}</div>
+                    <div style="font-size:0.75rem; color:var(--text-muted);">Tópicos</div>
+                </div>
+                <div style="flex:1; min-width:80px; text-align:center; background:rgba(52,199,89,0.08); border:1px solid rgba(52,199,89,0.25); border-radius:10px; padding:12px;">
+                    <div style="font-size:1.6rem; font-weight:800; color:#34C759;">${replies.length}</div>
+                    <div style="font-size:0.75rem; color:var(--text-muted);">Respostas</div>
+                </div>
+                <div style="flex:1; min-width:80px; text-align:center; background:rgba(255,59,48,0.08); border:1px solid rgba(255,59,48,0.25); border-radius:10px; padding:12px;">
+                    <div style="font-size:1.6rem; font-weight:800; color:#FF3B30;">${muralPosts.reduce((s,p) => s + (p.likes||0), 0)}</div>
+                    <div style="font-size:0.75rem; color:var(--text-muted);">Curtidas recebidas</div>
+                </div>
+                <div style="flex:1; min-width:80px; text-align:center; background:rgba(90,120,255,0.08); border:1px solid rgba(90,120,255,0.25); border-radius:10px; padding:12px;">
+                    <div style="font-size:1.6rem; font-weight:800; color:#5A78FF;">${muralPosts.length}</div>
+                    <div style="font-size:0.75rem; color:var(--text-muted);">Posts no Mural</div>
+                </div>
+            </div>`;
+
+        // Tópicos da comunidade
+        body += `<div style="${sectionStyle}"><p style="${titleStyle}">💬 Tópicos na Comunidade</p>`;
+        if (topics.length === 0) {
+            body += `<p style="${emptyStyle}">Nenhum tópico criado ainda.</p>`;
+        } else {
+            topics.forEach(t => {
+                body += `<div style="${itemStyle}">
+                    <span style="${badgeStyle('rgba(212,175,55,0.5)')}">${t.theme}</span>
+                    <strong>${truncate(t.title, 60)}</strong>
+                    <span style="color:var(--text-muted); float:right; font-size:0.8rem;">${fmt(t.created_at)}</span>
+                </div>`;
+            });
+        }
+        body += `</div>`;
+
+        // Respostas dadas
+        body += `<div style="${sectionStyle}"><p style="${titleStyle}">↩️ Respostas dadas</p>`;
+        if (replies.length === 0) {
+            body += `<p style="${emptyStyle}">Nenhuma resposta dada ainda.</p>`;
+        } else {
+            replies.forEach(r => {
+                body += `<div style="${itemStyle}">
+                    <span style="color:var(--text-muted); font-size:0.78rem; display:block; margin-bottom:2px;">em tópico #${r.topic_id} • ${fmt(r.created_at)}</span>
+                    ${truncate(r.text, 90)}
+                </div>`;
+            });
+        }
+        body += `</div>`;
+
+        // Posts no mural
+        body += `<div style="${sectionStyle}"><p style="${titleStyle}">🏆 Posts no Mural de Conquistas</p>`;
+        if (muralPosts.length === 0) {
+            body += `<p style="${emptyStyle}">Nenhum post no mural ainda.</p>`;
+        } else {
+            muralPosts.forEach(p => {
+                body += `<div style="${itemStyle}">
+                    <span style="${badgeStyle('rgba(90,120,255,0.5)')}">${p.category}</span>
+                    ${truncate(p.text, 80)}
+                    <span style="color:var(--text-muted); float:right; font-size:0.8rem;">❤️ ${p.likes||0} • ${fmt(p.created_at)}</span>
+                </div>`;
+            });
+        }
+        body += `</div></div>`;
+
+        // Atualiza o conteúdo do modal
+        const modalBody = document.getElementById('modal-body');
+        if (modalBody) {
+            modalBody.innerHTML = body;
+        }
+    } catch(err) {
+        const modalBody = document.getElementById('modal-body');
+        if (modalBody) modalBody.innerHTML = `<p style="color:#FF3B30;">Erro ao carregar histórico: ${err.message}</p>`;
+    }
 };
 
 // Helpers para Modal Customizado
@@ -1735,6 +1883,8 @@ function appShowModal(title, contentHtml, onConfirm) {
     const newConfirmBtn = confirmBtn.cloneNode(true);
     confirmBtn.parentNode.replaceChild(newConfirmBtn, confirmBtn);
     
+    // Mostrar ou esconder o botão de confirmar dependendo se há callback
+    newConfirmBtn.style.display = onConfirm ? '' : 'none';
     newConfirmBtn.onclick = onConfirm;
     
     modal.classList.add('active');
