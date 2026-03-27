@@ -168,16 +168,9 @@ function setupRealtime() {
     // Escutar mudanças no Mural
     sb
         .channel('public:mural_posts')
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'mural_posts' }, async (payload) => {
-            console.log('Realtime: Mural change', payload.eventType);
-            if (payload.eventType === 'INSERT') {
-                state.muralPosts.unshift(payload.new);
-            } else if (payload.eventType === 'UPDATE') {
-                const idx = state.muralPosts.findIndex(p => p.id === payload.new.id);
-                if (idx !== -1) state.muralPosts[idx] = payload.new;
-            } else if (payload.eventType === 'DELETE') {
-                state.muralPosts = state.muralPosts.filter(p => p.id !== payload.old.id);
-            }
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'mural_posts' }, async () => {
+            const { data } = await sb.from('mural_posts').select('*').order('created_at', { ascending: false });
+            state.muralPosts = data || [];
             if (document.getElementById('mural-view').classList.contains('active')) renderMural();
         })
         .subscribe();
@@ -185,17 +178,9 @@ function setupRealtime() {
     // Escutar mudanças na Comunidade (Tópicos)
     sb
         .channel('public:community_topics')
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'community_topics' }, async (payload) => {
-            console.log('Realtime: Topics change', payload.eventType);
-            if (payload.eventType === 'INSERT') {
-                state.communityTopics.unshift(payload.new);
-            } else if (payload.eventType === 'UPDATE') {
-                const idx = state.communityTopics.findIndex(t => t.id === payload.new.id);
-                if (idx !== -1) state.communityTopics[idx] = payload.new;
-            } else if (payload.eventType === 'DELETE') {
-                state.communityTopics = state.communityTopics.filter(t => t.id !== payload.old.id);
-            }
-            
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'community_topics' }, async () => {
+            const { data } = await sb.from('community_topics').select('*').order('created_at', { ascending: false });
+            state.communityTopics = data || [];
             if (document.getElementById('community-view').classList.contains('active')) {
                 const searchInput = document.getElementById('community-search');
                 renderCommunity(state.currentTheme || null, searchInput ? searchInput.value : null);
@@ -219,43 +204,21 @@ function setupRealtime() {
     // ESCUTAR MUDANÇAS NO RANKING (Tabela users)
     sb
         .channel('public:users')
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'users' }, async (payload) => {
-            console.log('Realtime: Users change', payload.eventType);
-            if (payload.eventType === 'INSERT') {
-                state.allUsers.push(payload.new);
-            } else if (payload.eventType === 'UPDATE') {
-                const idx = state.allUsers.findIndex(u => u.id === payload.new.id || u.email === payload.new.email);
-                if (idx !== -1) {
-                    state.allUsers[idx] = payload.new;
-                    // Se a mudança for no meu próprio usuário, atualiza pontos locais
-                    if (state.user && payload.new.email === state.user.email) {
-                        state.points = payload.new.points || 0;
-                        const completedIds = payload.new.completed_activities || [];
-                        state.activities.forEach(a => { a.completed = completedIds.includes(a.id); });
-                    }
-                }
-            }
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'users' }, async () => {
+            const { data } = await sb.from('users').select('*');
+            state.allUsers = data || [];
             updateLevel();
             updateGlobalUI();
             if (document.getElementById('ranking-view').classList.contains('active')) renderRanking();
             if (document.getElementById('users-view').classList.contains('active')) renderUsers();
-            if (document.getElementById('progress-view').classList.contains('active')) renderProgress();
-            if (document.getElementById('dashboard-view').classList.contains('active')) renderDashboard();
         })
         .subscribe();
     // Escutar mudanças nos Serviços (Anúncios)
     sb
         .channel('public:servicos_posts')
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'servicos_posts' }, async (payload) => {
-            if (payload.eventType === 'INSERT') {
-                state.servicosPosts.unshift(payload.new);
-            } else if (payload.eventType === 'UPDATE') {
-                const idx = state.servicosPosts.findIndex(s => s.id === payload.new.id);
-                if (idx !== -1) state.servicosPosts[idx] = payload.new;
-            } else if (payload.eventType === 'DELETE') {
-                state.servicosPosts = state.servicosPosts.filter(s => s.id !== payload.old.id);
-            }
-
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'servicos_posts' }, async () => {
+            const { data } = await sb.from('servicos_posts').select('*').order('created_at', { ascending: false });
+            state.servicosPosts = data || [];
             if (document.getElementById('servicos-view').classList.contains('active')) {
                 const searchInput = document.getElementById('servicos-search-input');
                 renderServicos(searchInput ? searchInput.value : '');
@@ -610,42 +573,6 @@ function renderDashboard() {
             <h3>Pronto para registrar mais um passo?</h3>
             <button class="btn btn-primary" style="margin-top: 15px;" onclick="window.appShowProgress()">Marcar Meu Progresso</button>
         </div>
-
-        <!-- ACESSO RÁPIDO -->
-        <div style="margin-top: 24px;">
-            <div class="card-title" style="margin-bottom: 14px; font-size: 0.85rem; letter-spacing: 1px; text-transform: uppercase; color: var(--text-muted);">Acesso Rápido</div>
-            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 16px;">
-
-                <!-- Botão IA -->
-                <a href="https://chatgpt.com/g/g-69b9959b9c6481919f727e21df289ca4-charles-nunes-expert-1-0-para-alunos"
-                   target="_blank" rel="noopener noreferrer"
-                   style="text-decoration: none; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px;
-                          background: linear-gradient(135deg, #6a0dad 0%, #3b82f6 100%);
-                          border-radius: 16px; padding: 24px 16px; cursor: pointer;
-                          transition: transform 0.2s ease, box-shadow 0.2s ease; box-shadow: 0 4px 20px rgba(106,13,173,0.35);"
-                   onmouseover="this.style.transform='translateY(-4px)';this.style.boxShadow='0 8px 30px rgba(106,13,173,0.55)'"
-                   onmouseout="this.style.transform='translateY(0)';this.style.boxShadow='0 4px 20px rgba(106,13,173,0.35)'">
-                    <div style="font-size: 2.2rem;">🤖</div>
-                    <div style="color: white; font-weight: 700; font-size: 1rem; text-align: center;">IA do Charles</div>
-                    <div style="color: rgba(255,255,255,0.75); font-size: 0.8rem; text-align: center;">Tire suas dúvidas com o Expert</div>
-                </a>
-
-                <!-- Botão WhatsApp -->
-                <a href="https://chat.whatsapp.com/HYoaOsDq6x4HvfvQylgi4H?mode=gi_t"
-                   target="_blank" rel="noopener noreferrer"
-                   style="text-decoration: none; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px;
-                          background: linear-gradient(135deg, #128C7E 0%, #25D366 100%);
-                          border-radius: 16px; padding: 24px 16px; cursor: pointer;
-                          transition: transform 0.2s ease, box-shadow 0.2s ease; box-shadow: 0 4px 20px rgba(37,211,102,0.35);"
-                   onmouseover="this.style.transform='translateY(-4px)';this.style.boxShadow='0 8px 30px rgba(37,211,102,0.55)'"
-                   onmouseout="this.style.transform='translateY(0)';this.style.boxShadow='0 4px 20px rgba(37,211,102,0.35)'">
-                    <div style="font-size: 2.2rem;">💬</div>
-                    <div style="color: white; font-weight: 700; font-size: 1rem; text-align: center;">Grupo WhatsApp</div>
-                    <div style="color: rgba(255,255,255,0.75); font-size: 0.8rem; text-align: center;">Entre na comunidade exclusiva</div>
-                </a>
-
-            </div>
-        </div>
     `;
 }
 window.appShowProgress = () => switchSubView('progress');
@@ -738,13 +665,14 @@ async function saveState() {
             localData.phone = u.phone;
             localData.city = u.city;
             localData.photo = u.photo;
+            localData.bio = u.bio;
         }
         localStorage.setItem(`progress_${state.user.email}`, JSON.stringify(localData));
 
         if (u) {
             const { error } = await sb.from('users').update({ 
                 points: state.points, completed_activities: completedIds,
-                name: u.name, profession: u.profession, phone: u.phone, city: u.city, photo: u.photo
+                name: u.name, profession: u.profession, phone: u.phone, city: u.city, photo: u.photo, bio: u.bio
             }).eq('email', state.user.email);
             if (error) {
                 if (state.user.email === 'charlesnunes77@yahoo.com.br') {
@@ -788,6 +716,7 @@ function loadState() {
                     if (data.phone) u.phone = data.phone;
                     if (data.city) u.city = data.city;
                     if (data.photo) u.photo = data.photo;
+                    if (data.bio) u.bio = data.bio;
                 }
             } catch(e) {}
         }
@@ -838,7 +767,7 @@ function renderRanking() {
                                     <td style="padding: 15px 20px; font-weight: 700; color: ${i < 3 ? 'var(--white)' : 'var(--text-muted)'};">${i + 1}º</td>
                                     <td style="padding: 15px 20px;">
                                         <div style="font-size: 1.05rem; display: flex; align-items: center; gap: 8px;">
-                                            ${nameHtml}${getTrophy(i)}
+                                            <span class="clickable-user" onclick="window.appShowUserProfile('${u.email}')">${nameHtml}</span>${getTrophy(i)}
                                         </div>
                                         <div style="margin-top: 5px;">${getUserRankBadge(u.email)}</div>
                                     </td>
@@ -920,7 +849,7 @@ async function renderCommunity(selectedTheme = null, searchQuery = null) {
                     ${filteredTopics.map(t => `
                         <div class="topic-item" onclick="window.appShowTopic(${t.id})">
                             <div class="topic-header">
-                                <span style="display: flex; align-items: center; gap: 8px;">[${t.theme}] Por <strong>${t.user_name || 'Desconhecido'}</strong> ${getUserRankBadge(t.user_name || '')}</span>
+                                <span style="display: flex; align-items: center; gap: 8px;">[${t.theme}] Por <strong><span class="clickable-user" onclick="event.stopPropagation(); window.appShowUserProfile('${t.user_email}')">${t.user_name || 'Desconhecido'}</span></strong> ${getUserRankBadge(t.user_name || '')}</span>
                                 <span>${new Date(t.created_at).toLocaleDateString('pt-BR')}</span>
                             </div>
                             <div class="topic-title">${t.title}</div>
@@ -965,7 +894,7 @@ window.appShowTopic = async (topicId) => {
         
         <div class="card" style="border-left: 5px solid var(--gold); margin-bottom: 30px;">
             <div class="topic-header" style="display: flex; align-items: center; gap: 8px;">
-                <strong>${topic.user_name}</strong> ${getUserRankBadge(topic.user_name)} • ${new Date(topic.created_at).toLocaleDateString('pt-BR')}
+                <strong><span class="clickable-user" onclick="window.appShowUserProfile('${topic.user_email}')">${topic.user_name}</span></strong> ${getUserRankBadge(topic.user_name)} • ${new Date(topic.created_at).toLocaleDateString('pt-BR')}
             </div>
             <h1 style="color: var(--white); margin: 15px 0;">${topic.title}</h1>
             <p style="font-size: 1.1rem; line-height: 1.8;">${topic.text}</p>
@@ -976,7 +905,7 @@ window.appShowTopic = async (topicId) => {
             ${(replies && replies.length > 0) ? replies.map(r => `
                 <div class="reply-item">
                     <div class="topic-header" style="margin-bottom: 10px; display: flex; align-items: center; gap: 8px;">
-                        <strong>${r.user_name}</strong> ${getUserRankBadge(r.user_name)} • ${new Date(r.created_at).toLocaleDateString('pt-BR')}
+                        <strong><span class="clickable-user" onclick="window.appShowUserProfile('${r.user_email}')">${r.user_name}</span></strong> ${getUserRankBadge(r.user_name)} • ${new Date(r.created_at).toLocaleDateString('pt-BR')}
                     </div>
                     <p>${r.text}</p>
                     ${(state.user.isModerator || r.user_email === state.user.email) ? `<button class="btn-delete-small" onclick="window.appDeleteReply(${topic.id}, ${r.id})">Excluir</button>` : ''}
@@ -1101,9 +1030,9 @@ async function renderMural() {
                 return `
                 <div class="card" style="border-top: 3px solid var(--gold); animation: fadeIn 0.5s ease-out;">
                     <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 5px;">
-                        <div style="width: 36px; height: 36px; border-radius: 50%; background: var(--gold); color: black; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 14px;">${p.user_name ? p.user_name.charAt(0).toUpperCase() : '?'}</div>
+                        <div style="width: 36px; height: 36px; border-radius: 50%; background: var(--gold); color: black; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 14px; cursor: pointer;" onclick="window.appShowUserProfile('${p.user_email}')">${p.user_name ? p.user_name.charAt(0).toUpperCase() : '?'}</div>
                         <div style="display: flex; flex-direction: column;">
-                            <strong>${p.user_name || 'Desconhecido'}</strong>
+                            <strong><span class="clickable-user" onclick="window.appShowUserProfile('${p.user_email}')">${p.user_name || 'Desconhecido'}</span></strong>
                             ${getUserRankBadge(p.user_name || '')}
                         </div>
                     </div>
@@ -1249,9 +1178,9 @@ async function renderServicos(searchQuery = '') {
                 <div class="card servico-card ${p.finalized ? 'status-finalized' : ''}">
                     <div class="servico-card-header">
                         <div class="user-info" style="display: flex; align-items: center; gap: 10px;">
-                            ${userPhoto ? `<img src="${userPhoto}" style="width: 32px; height: 32px; border-radius: 50%; object-fit: cover;">` : `<div style="width: 32px; height: 32px; border-radius: 50%; background: var(--gold); color: black; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 14px;">${p.user_name ? p.user_name.charAt(0).toUpperCase() : '?'}</div>`}
+                            ${userPhoto ? `<img src="${userPhoto}" style="width: 32px; height: 32px; border-radius: 50%; object-fit: cover; cursor: pointer;" onclick="window.appShowUserProfile('${p.user_email}')">` : `<div style="width: 32px; height: 32px; border-radius: 50%; background: var(--gold); color: black; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 14px; cursor: pointer;" onclick="window.appShowUserProfile('${p.user_email}')">${p.user_name ? p.user_name.charAt(0).toUpperCase() : '?'}</div>`}
                             <div>
-                                <div style="display: flex; align-items: center; gap: 8px;"><strong>${p.user_name}</strong> ${getUserRankBadge(p.user_name)}</div>
+                                <div style="display: flex; align-items: center; gap: 8px;"><strong><span class="clickable-user" onclick="window.appShowUserProfile('${p.user_email}')">${p.user_name}</span></strong> ${getUserRankBadge(p.user_name)}</div>
                                 <span class="servico-date" style="display: block;">${new Date(p.created_at).toLocaleDateString('pt-BR')}</span>
                             </div>
                         </div>
@@ -1287,7 +1216,7 @@ async function renderServicos(searchQuery = '') {
                             ${postReplies.length > 0 ? postReplies.map(r => `
                                 <div class="comment-item">
                                     <div class="comment-header" style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
-                                        <strong>${r.user_name}</strong> ${getUserRankBadge(r.user_name)} • ${new Date(r.created_at).toLocaleDateString('pt-BR')}
+                                        <strong><span class="clickable-user" onclick="window.appShowUserProfile('${r.user_email}')">${r.user_name}</span></strong> ${getUserRankBadge(r.user_name)} • ${new Date(r.created_at).toLocaleDateString('pt-BR')}
                                         ${(r.user_email === currentUserEmail || isMod) ? `<button class="btn-delete-x" onclick="window.appAskDeleteServicoComment(${p.id}, ${r.id})">&times;</button>` : ''}
                                     </div>
                                     <p>${r.text}</p>
@@ -1706,6 +1635,10 @@ function renderPerfil() {
                     <label style="color: var(--gold); display: block; margin-bottom: 5px;">Cidade / Estado</label>
                     <input type="text" id="perfil-city" class="input-styled" value="${user.city || ''}" placeholder="São Paulo - SP">
                 </div>
+                <div>
+                    <label style="color: var(--gold); display: block; margin-bottom: 5px;">Sobre Mim (Breve resumo)</label>
+                    <textarea id="perfil-bio" class="textarea-styled" placeholder="Conte um pouco sobre sua trajetória profissional e como pode ajudar outros membros..." style="min-height: 100px;">${user.bio || ''}</textarea>
+                </div>
                 
                 <button class="btn btn-primary" style="margin-top: 10px;" onclick="window.appSavePerfil(this)">
                     Salvar Informações
@@ -1748,6 +1681,7 @@ window.appSavePerfil = async (btn) => {
         state.allUsers[userIndex].phone = phone;
         state.allUsers[userIndex].city = city;
         state.allUsers[userIndex].photo = photo;
+        state.allUsers[userIndex].bio = document.getElementById('perfil-bio').value;
     }
 
     await saveState();
@@ -1943,6 +1877,76 @@ window.appShowUserHistory = async (email) => {
         const modalBody = document.getElementById('modal-body');
         if (modalBody) modalBody.innerHTML = `<p style="color:#FF3B30;">Erro ao carregar histórico: ${err.message}</p>`;
     }
+};
+
+// --- PERFIL PÚBLICO ---
+window.appShowUserProfile = async (emailOrName) => {
+    // Tenta encontrar por e-mail primeiro, depois por nome
+    let user = state.allUsers.find(u => u.email === emailOrName || u.name === emailOrName);
+    
+    // Se não encontrou no state local, busca no banco (importante para novos usuários)
+    if (!user) {
+        appShowModal("Carregando...", `<div style="text-align:center; padding: 20px; color: var(--gold);"><i data-lucide="loader" class="spin"></i> Buscando perfil...</div>`, null);
+        refreshIcons();
+        const { data, error } = await sb.from('users').select('*').or(`email.eq.${emailOrName},name.eq.${emailOrName}`).maybeSingle();
+        if (data) {
+            user = data;
+            // Opcional: adicionar ao state para cache
+            if (!state.allUsers.find(u => u.email === data.email)) state.allUsers.push(data);
+        } else {
+            appShowModal("Erro", "<p>Perfil não encontrado.</p>", null);
+            return;
+        }
+    }
+
+    const rankBadge = getUserRankBadge(user.email);
+    const photoHtml = user.photo 
+        ? `<img src="${user.photo}" style="width: 120px; height: 120px; border-radius: 50%; object-fit: cover; border: 3px solid var(--gold); margin-bottom: 15px;">`
+        : `<div style="width: 120px; height: 120px; border-radius: 50%; background: var(--gold); color: black; display: flex; align-items: center; justify-content: center; font-size: 48px; font-weight: bold; border: 3px solid var(--gold); margin-bottom: 15px;">${user.name.charAt(0).toUpperCase()}</div>`;
+
+    const body = `
+        <div style="text-align: center; padding: 10px 0;">
+            ${photoHtml}
+            <h2 style="color: var(--white); margin-bottom: 5px;">${user.name}</h2>
+            <div style="margin-bottom: 20px;">${rankBadge}</div>
+            
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; text-align: left; background: rgba(255,255,255,0.03); padding: 20px; border-radius: 12px; margin-bottom: 20px; border: 1px solid rgba(255,255,255,0.05);">
+                <div>
+                    <label style="color: var(--gold); font-size: 0.75rem; text-transform: uppercase; font-weight: 700; display: block; margin-bottom: 4px;">Profissão</label>
+                    <div style="color: #EEE; font-size: 0.95rem;">${user.profession || 'Não informado'}</div>
+                </div>
+                <div>
+                    <label style="color: var(--gold); font-size: 0.75rem; text-transform: uppercase; font-weight: 700; display: block; margin-bottom: 4px;">Cidade</label>
+                    <div style="color: #EEE; font-size: 0.95rem;">${user.city || 'Não informado'}</div>
+                </div>
+                <div style="grid-column: span 2;">
+                    <label style="color: var(--gold); font-size: 0.75rem; text-transform: uppercase; font-weight: 700; display: block; margin-bottom: 4px;">E-mail</label>
+                    <div style="color: #EEE; font-size: 0.95rem;">${user.email}</div>
+                </div>
+            </div>
+            
+            <div style="text-align: left;">
+                <label style="color: var(--gold); font-size: 0.75rem; text-transform: uppercase; font-weight: 700; display: block; margin-bottom: 8px;">Sobre Mim</label>
+                <div style="color: #CCC; line-height: 1.6; font-size: 1rem; font-style: ${user.bio ? 'normal' : 'italic'}; background: rgba(0,0,0,0.2); padding: 15px; border-radius: 8px; border-left: 3px solid var(--gold);">
+                    ${user.bio || 'Este usuário ainda não escreveu um resumo.'}
+                </div>
+            </div>
+            
+            ${state.user.isModerator ? `
+                <button class="btn btn-secondary" style="margin-top: 25px; width: 100%; border-color: rgba(212,175,55,0.3);" onclick="window.appShowUserHistory('${user.email}')">
+                    <i data-lucide="history" style="width: 16px; height: 16px;"></i> Ver Histórico Acadêmico
+                </button>
+            ` : ''}
+        </div>
+    `;
+
+    appShowModal(`Perfil de ${user.name}`, body, null);
+    
+    // Esconde o botão de confirmar pois é apenas visualização
+    const confirmBtn = document.getElementById('modal-confirm-btn');
+    if (confirmBtn) confirmBtn.style.display = 'none';
+    
+    refreshIcons();
 };
 
 // Helpers para Modal Customizado
