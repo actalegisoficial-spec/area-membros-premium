@@ -45,26 +45,54 @@
         }
 
         // LOGIN
+        function makeTimeout(ms, msg) {
+            return new Promise(function(_, reject) {
+                setTimeout(function() { reject(new Error(msg)); }, ms);
+            });
+        }
+
         window.doLogin = async function() {
             var email = document.getElementById('login-email').value.trim().toLowerCase();
             var password = document.getElementById('login-password').value;
             var btn = document.getElementById('login-btn');
-            
+
             if (!email || !password) { showAuthMsg('login-error', 'Preencha e-mail e senha.', true); return; }
             var sb = getSupabase();
             if (!sb) { showAuthMsg('login-error', 'Serviço não carregou. Recarregue a página.', true); return; }
-            
-            showAuthMsg('login-error', 'Entrando...', false);
+
             if (btn) { btn.disabled = true; btn.textContent = 'Processando...'; }
-            
+
+            async function attemptLogin(attempt) {
+                if (attempt === 1) {
+                    showAuthMsg('login-error', 'Conectando... (pode levar alguns segundos)', false);
+                } else {
+                    showAuthMsg('login-error', 'Ainda tentando... aguarde um momento.', false);
+                }
+                var TIMEOUT_MS = 60000; // 60s
+                var result = await Promise.race([
+                    sb.auth.signInWithPassword({ email: email, password: password }),
+                    makeTimeout(TIMEOUT_MS, '__TIMEOUT__')
+                ]);
+                return result;
+            }
+
             try {
-                // Timeout promise to avoid eternal hanging
-                var timeout = new Promise(function(_, reject) { setTimeout(function() { reject(new Error('A conexão com o servidor está muito lenta. Tente recarregar a página ou verifique sua internet.')); }, 25000); });
-                var loginReq = sb.auth.signInWithPassword({ email: email, password: password });
-                var result = await Promise.race([loginReq, timeout]);
-                
+                var result;
+                try {
+                    result = await attemptLogin(1);
+                } catch (e1) {
+                    if (e1.message === '__TIMEOUT__') {
+                        // First attempt timed out — wait 1s then retry once
+                        showAuthMsg('login-error', 'Servidor lento, tentando novamente...', false);
+                        await new Promise(function(r) { setTimeout(r, 1000); });
+                        result = await attemptLogin(2);
+                    } else {
+                        throw e1;
+                    }
+                }
+
                 if (btn) { btn.disabled = false; btn.textContent = 'Entrar'; }
-                
+
                 if (result.error) {
                     var msg = result.error.message;
                     if (msg === 'Invalid login credentials' || msg === 'invalid_credentials') {
@@ -80,7 +108,11 @@
                 }
             } catch(e) {
                 if (btn) { btn.disabled = false; btn.textContent = 'Entrar'; }
-                showAuthMsg('login-error', 'Erro: ' + e.message, true);
+                if (e.message === '__TIMEOUT__') {
+                    showAuthMsg('login-error', 'Erro: O servidor está demorando muito. Tente novamente em instantes.', true);
+                } else {
+                    showAuthMsg('login-error', 'Erro: ' + e.message, true);
+                }
             }
         };
 
@@ -151,7 +183,7 @@
                                 <input type="password" id="login-password" placeholder="••••••••" autocomplete="current-password">
                             </div>
                             <button type="button" id="login-btn" class="btn btn-primary btn-block" onclick="doLogin()">Entrar</button>
-                            <div style="text-align:center; color:gray; font-size:10px; margin-top:10px;">Versão 1.0.3 (Final Fix)</div>
+                            <div style="text-align:center; color:gray; font-size:10px; margin-top:10px;">Versão 1.2</div>
                             <p id="login-error" class="auth-error"></p>
 
                         <div class="auth-links">
@@ -317,6 +349,6 @@
     <!-- Toast Container -->
     <div id="toast-container"></div>
 
-    <script src="app.js?v=1.1"></script>
+    <script src="app.js?v=1.2"></script>
 </body>
 </html>
