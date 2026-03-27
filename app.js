@@ -573,6 +573,42 @@ function renderDashboard() {
             <h3>Pronto para registrar mais um passo?</h3>
             <button class="btn btn-primary" style="margin-top: 15px;" onclick="window.appShowProgress()">Marcar Meu Progresso</button>
         </div>
+
+        <!-- ACESSO RÁPIDO -->
+        <div style="margin-top: 24px;">
+            <div class="card-title" style="margin-bottom: 14px; font-size: 0.85rem; letter-spacing: 1px; text-transform: uppercase; color: var(--text-muted);">Acesso Rápido</div>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+
+                <!-- Botão IA -->
+                <a href="https://chatgpt.com/g/g-69b9959b9c6481919f727e21df289ca4-charles-nunes-expert-1-0-para-alunos"
+                   target="_blank" rel="noopener noreferrer"
+                   style="text-decoration: none; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px;
+                          background: linear-gradient(135deg, #6a0dad 0%, #3b82f6 100%);
+                          border-radius: 16px; padding: 24px 16px; cursor: pointer;
+                          transition: transform 0.2s ease, box-shadow 0.2s ease; box-shadow: 0 4px 20px rgba(106,13,173,0.35);"
+                   onmouseover="this.style.transform='translateY(-4px)';this.style.boxShadow='0 8px 30px rgba(106,13,173,0.55)'"
+                   onmouseout="this.style.transform='translateY(0)';this.style.boxShadow='0 4px 20px rgba(106,13,173,0.35)'">
+                    <div style="font-size: 2.2rem;">🤖</div>
+                    <div style="color: white; font-weight: 700; font-size: 1rem; text-align: center;">IA do Charles</div>
+                    <div style="color: rgba(255,255,255,0.75); font-size: 0.8rem; text-align: center;">Tire suas dúvidas com o Expert</div>
+                </a>
+
+                <!-- Botão WhatsApp -->
+                <a href="https://chat.whatsapp.com/HYoaOsDq6x4HvfvQylgi4H?mode=gi_t"
+                   target="_blank" rel="noopener noreferrer"
+                   style="text-decoration: none; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px;
+                          background: linear-gradient(135deg, #128C7E 0%, #25D366 100%);
+                          border-radius: 16px; padding: 24px 16px; cursor: pointer;
+                          transition: transform 0.2s ease, box-shadow 0.2s ease; box-shadow: 0 4px 20px rgba(37,211,102,0.35);"
+                   onmouseover="this.style.transform='translateY(-4px)';this.style.boxShadow='0 8px 30px rgba(37,211,102,0.55)'"
+                   onmouseout="this.style.transform='translateY(0)';this.style.boxShadow='0 4px 20px rgba(37,211,102,0.35)'">
+                    <div style="font-size: 2.2rem;">💬</div>
+                    <div style="color: white; font-weight: 700; font-size: 1rem; text-align: center;">Grupo WhatsApp</div>
+                    <div style="color: rgba(255,255,255,0.75); font-size: 0.8rem; text-align: center;">Entre na comunidade exclusiva</div>
+                </a>
+
+            </div>
+        </div>
     `;
 }
 window.appShowProgress = () => switchSubView('progress');
