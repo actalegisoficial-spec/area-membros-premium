@@ -168,9 +168,16 @@ function setupRealtime() {
     // Escutar mudanças no Mural
     sb
         .channel('public:mural_posts')
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'mural_posts' }, async () => {
-            const { data } = await sb.from('mural_posts').select('*').order('created_at', { ascending: false });
-            state.muralPosts = data || [];
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'mural_posts' }, async (payload) => {
+            console.log('Realtime: Mural change', payload.eventType);
+            if (payload.eventType === 'INSERT') {
+                state.muralPosts.unshift(payload.new);
+            } else if (payload.eventType === 'UPDATE') {
+                const idx = state.muralPosts.findIndex(p => p.id === payload.new.id);
+                if (idx !== -1) state.muralPosts[idx] = payload.new;
+            } else if (payload.eventType === 'DELETE') {
+                state.muralPosts = state.muralPosts.filter(p => p.id !== payload.old.id);
+            }
             if (document.getElementById('mural-view').classList.contains('active')) renderMural();
         })
         .subscribe();
@@ -178,9 +185,17 @@ function setupRealtime() {
     // Escutar mudanças na Comunidade (Tópicos)
     sb
         .channel('public:community_topics')
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'community_topics' }, async () => {
-            const { data } = await sb.from('community_topics').select('*').order('created_at', { ascending: false });
-            state.communityTopics = data || [];
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'community_topics' }, async (payload) => {
+            console.log('Realtime: Topics change', payload.eventType);
+            if (payload.eventType === 'INSERT') {
+                state.communityTopics.unshift(payload.new);
+            } else if (payload.eventType === 'UPDATE') {
+                const idx = state.communityTopics.findIndex(t => t.id === payload.new.id);
+                if (idx !== -1) state.communityTopics[idx] = payload.new;
+            } else if (payload.eventType === 'DELETE') {
+                state.communityTopics = state.communityTopics.filter(t => t.id !== payload.old.id);
+            }
+            
             if (document.getElementById('community-view').classList.contains('active')) {
                 const searchInput = document.getElementById('community-search');
                 renderCommunity(state.currentTheme || null, searchInput ? searchInput.value : null);
@@ -204,21 +219,43 @@ function setupRealtime() {
     // ESCUTAR MUDANÇAS NO RANKING (Tabela users)
     sb
         .channel('public:users')
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'users' }, async () => {
-            const { data } = await sb.from('users').select('*');
-            state.allUsers = data || [];
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'users' }, async (payload) => {
+            console.log('Realtime: Users change', payload.eventType);
+            if (payload.eventType === 'INSERT') {
+                state.allUsers.push(payload.new);
+            } else if (payload.eventType === 'UPDATE') {
+                const idx = state.allUsers.findIndex(u => u.id === payload.new.id || u.email === payload.new.email);
+                if (idx !== -1) {
+                    state.allUsers[idx] = payload.new;
+                    // Se a mudança for no meu próprio usuário, atualiza pontos locais
+                    if (state.user && payload.new.email === state.user.email) {
+                        state.points = payload.new.points || 0;
+                        const completedIds = payload.new.completed_activities || [];
+                        state.activities.forEach(a => { a.completed = completedIds.includes(a.id); });
+                    }
+                }
+            }
             updateLevel();
             updateGlobalUI();
             if (document.getElementById('ranking-view').classList.contains('active')) renderRanking();
             if (document.getElementById('users-view').classList.contains('active')) renderUsers();
+            if (document.getElementById('progress-view').classList.contains('active')) renderProgress();
+            if (document.getElementById('dashboard-view').classList.contains('active')) renderDashboard();
         })
         .subscribe();
     // Escutar mudanças nos Serviços (Anúncios)
     sb
         .channel('public:servicos_posts')
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'servicos_posts' }, async () => {
-            const { data } = await sb.from('servicos_posts').select('*').order('created_at', { ascending: false });
-            state.servicosPosts = data || [];
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'servicos_posts' }, async (payload) => {
+            if (payload.eventType === 'INSERT') {
+                state.servicosPosts.unshift(payload.new);
+            } else if (payload.eventType === 'UPDATE') {
+                const idx = state.servicosPosts.findIndex(s => s.id === payload.new.id);
+                if (idx !== -1) state.servicosPosts[idx] = payload.new;
+            } else if (payload.eventType === 'DELETE') {
+                state.servicosPosts = state.servicosPosts.filter(s => s.id !== payload.old.id);
+            }
+
             if (document.getElementById('servicos-view').classList.contains('active')) {
                 const searchInput = document.getElementById('servicos-search-input');
                 renderServicos(searchInput ? searchInput.value : '');
