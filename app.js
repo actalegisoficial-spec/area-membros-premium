@@ -577,7 +577,7 @@ function renderDashboard() {
         <!-- ACESSO RÁPIDO -->
         <div style="margin-top: 24px;">
             <div class="card-title" style="margin-bottom: 14px; font-size: 0.85rem; letter-spacing: 1px; text-transform: uppercase; color: var(--text-muted);">Acesso Rápido</div>
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 16px;">
 
                 <!-- Botão IA -->
                 <a href="https://chatgpt.com/g/g-69b9959b9c6481919f727e21df289ca4-charles-nunes-expert-1-0-para-alunos"
