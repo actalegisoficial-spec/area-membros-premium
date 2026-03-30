@@ -849,13 +849,6 @@ h1, h2, h3, .brand-title {
 
 .table-responsive {
     width: 100%;
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-    /* Hard-fix for WebKit/Chrome Compositing Disappearance Bug */
-    transform: translateZ(0);
-    will-change: transform;
-    position: relative;
-    z-index: 1;
 }
 
 .row-blocked {
@@ -1591,6 +1584,11 @@ h1, h2, h3, .brand-title {
     /* Tabela de usuários — scroll horizontal */
     .premium-table {
         font-size: 0.8rem;
+    }
+    
+    .table-responsive {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
     }
 
     .premium-table th,

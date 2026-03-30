@@ -580,7 +580,7 @@ function renderContent(viewId) {
 // --- COMPONENTES ---
 
 function renderDashboard() {
-    console.log('[Dashboard] Renderizando v1.8...');
+    console.log('[Dashboard] Renderizando v1.9...');
     try {
     const nextLevel = LEVELS[LEVELS.indexOf(state.level) + 1] || 'Limites Alcançados';
     
