@@ -228,6 +228,12 @@ function setupRealtime() {
                 }
             } else if (eventType === 'UPDATE') {
                 if (newRow) {
+                    // OTIMIZAÇÃO: Remove colunas pesadas na memória para os outros usuários vindos do Realtime
+                    if (state.user && newRow.email !== state.user.email) {
+                        delete newRow.completed_activities;
+                        delete newRow.bio;
+                    }
+                    
                     const idx = state.allUsers.findIndex(u => u.email === newRow.email);
                     if (idx !== -1) {
                         state.allUsers[idx] = { ...state.allUsers[idx], ...newRow };
@@ -452,19 +458,26 @@ async function showMainApp() {
         // 3. BACKGROUND: FETCH DB PROFILE (NON-BLOCKING)
         (async () => {
             try {
-                // Fetch ALL Users for Ranking
-                const { data: allUsers } = await sb.from('users').select('*');
+                // OTIMIZAÇÃO: Busca geral otimizada ignorando arrays pesados como 'completed_activities' de dezenas de usuários
+                const { data: allUsers } = await sb.from('users').select('id, email, name, role, points, photo, profession, phone, city, joined_date, is_blocked, verified');
                 if (allUsers) {
                     state.allUsers = allUsers;
                     renderRanking();
                     renderUsers();
                 }
 
-                // Fetch or Create My Profile
-                let profile = state.allUsers.find(u => u.email === user.email);
-                if (!profile) {
-                    const { data } = await sb.from('users').select('*').eq('email', user.email).maybeSingle();
-                    profile = data;
+                // Busca o perfil COMPLETO apenas do usuário locado (único com necessidade de 'completed_activities' ativo)
+                const { data: profileData } = await sb.from('users').select('*').eq('email', user.email).maybeSingle();
+                let profile = profileData;
+                
+                if (profile) {
+                    // Sincroniza o perfil completo com a lista geral em memória
+                    const idx = state.allUsers.findIndex(u => u.email === user.email);
+                    if (idx !== -1) {
+                        state.allUsers[idx] = { ...state.allUsers[idx], ...profile };
+                    } else {
+                        state.allUsers.push(profile);
+                    }
                 }
 
                 if (profile) {
