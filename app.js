@@ -841,7 +841,7 @@ function renderRanking() {
     view.innerHTML = `
         <div class="view-header"><h2>Ranking Geral</h2></div>
         <div class="card" style="padding: 0; overflow: hidden;">
-            <div class="table-container">
+            <div class="table-responsive">
                 <table class="premium-table" style="width: 100%; text-align: left; border-collapse: collapse;">
                     <thead>
                         <tr style="border-bottom: 1px solid rgba(255,255,255,0.1);">
