@@ -580,7 +580,7 @@ function renderContent(viewId) {
 // --- COMPONENTES ---
 
 function renderDashboard() {
-    console.log('[Dashboard] Renderizando v1.7...');
+    console.log('[Dashboard] Renderizando v1.8...');
     try {
     const nextLevel = LEVELS[LEVELS.indexOf(state.level) + 1] || 'Limites Alcançados';
     
@@ -840,7 +840,7 @@ function renderRanking() {
 
     view.innerHTML = `
         <div class="view-header"><h2>Ranking Geral</h2></div>
-        <div class="card" style="padding: 0; overflow: hidden;">
+        <div class="card" style="padding: 0;">
             <div class="table-responsive">
                 <table class="premium-table" style="width: 100%; text-align: left; border-collapse: collapse;">
                     <thead>
@@ -1551,7 +1551,7 @@ function renderUsers() {
             `).join('')}
         </div>
 
-        <div class="card" style="padding: 0; overflow: hidden;">
+        <div class="card" style="padding: 0;">
             <div class="table-container" id="users-table-container" style="overflow-x: auto; max-height: 70vh; overflow-y: auto;">
                 <table class="premium-table">
                     <thead>
