@@ -1088,7 +1088,7 @@ h1, h2, h3, .brand-title {
 
 .card {
     position: relative;
-    overflow: hidden; /* Mantém o border-radius */
+    /* overflow: hidden removido — cortava a tabela de ranking no desktop */
 }
 
 /* --- Estilos da Seção de Serviços --- */
