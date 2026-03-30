@@ -458,27 +458,22 @@ async function showMainApp() {
         // 3. BACKGROUND: FETCH DB PROFILE (NON-BLOCKING)
         (async () => {
             try {
-                // OTIMIZAÇÃO: Busca geral otimizada ignorando arrays pesados como 'completed_activities' de dezenas de usuários
-                const { data: allUsers } = await sb.from('users').select('id, email, name, role, points, photo, profession, phone, city, joined_date, is_blocked, verified');
+                // OTIMIZAÇÃO: Volta ao select('*') por compatibilidade, mas LIMPA a RAM, apagando o histórico de outros alunos
+                const { data: allUsers } = await sb.from('users').select('*');
                 if (allUsers) {
-                    state.allUsers = allUsers;
+                    state.allUsers = allUsers.map(u => {
+                        if (u.email !== user.email) {
+                            delete u.completed_activities;
+                            delete u.bio;
+                        }
+                        return u;
+                    });
                     renderRanking();
                     renderUsers();
                 }
 
-                // Busca o perfil COMPLETO apenas do usuário locado (único com necessidade de 'completed_activities' ativo)
-                const { data: profileData } = await sb.from('users').select('*').eq('email', user.email).maybeSingle();
-                let profile = profileData;
-                
-                if (profile) {
-                    // Sincroniza o perfil completo com a lista geral em memória
-                    const idx = state.allUsers.findIndex(u => u.email === user.email);
-                    if (idx !== -1) {
-                        state.allUsers[idx] = { ...state.allUsers[idx], ...profile };
-                    } else {
-                        state.allUsers.push(profile);
-                    }
-                }
+                // Obtém localmente o perfil completo já carregado (ou cria via upsert depois se não existir)
+                let profile = state.allUsers.find(u => u.email === user.email);
 
                 if (profile) {
                     state.user.name = profile.name || state.user.name;
@@ -585,7 +580,7 @@ function renderContent(viewId) {
 // --- COMPONENTES ---
 
 function renderDashboard() {
-    console.log('[Dashboard] Renderizando v1.5...');
+    console.log('[Dashboard] Renderizando v1.6...');
     try {
     const nextLevel = LEVELS[LEVELS.indexOf(state.level) + 1] || 'Limites Alcançados';
     
@@ -1066,17 +1061,20 @@ window.appPostTopic = async (theme, btn) => {
 
     window.appSetButtonLoading(btn, true);
 
-    const { error } = await sb.from('community_topics').insert({
+    const { data, error } = await sb.from('community_topics').insert({
         theme: theme,
         user_email: state.user.email,
         user_name: state.user.name,
         title: titleEl.value,
         text: textEl.value
-    });
+    }).select().single();
 
     if (error) {
         window.appShowToast('Erro ao criar tópico: ' + error.message, 'error');
     } else {
+        if (data && !state.communityTopics.find(t => t.id === data.id)) {
+            state.communityTopics.unshift(data);
+        }
         renderCommunity(theme);
         window.appShowToast('Tópico criado com sucesso!', 'success');
     }
@@ -1161,13 +1159,13 @@ window.appPostToMural = async (btn) => {
 
     window.appSetButtonLoading(btn, true);
 
-    const { error } = await sb.from('mural_posts').insert({
+    const { data, error } = await sb.from('mural_posts').insert({
         user_email: state.user.email,
         user_name: state.user.name,
         text: textEl.value,
         category: catEl.value,
         liked_by: []
-    });
+    }).select().single();
 
     window.appSetButtonLoading(btn, false);
 
@@ -1175,8 +1173,11 @@ window.appPostToMural = async (btn) => {
         window.appShowToast('Erro ao publicar: ' + error.message, 'error');
     } else {
         textEl.value = '';
+        if (data && !state.muralPosts.find(p => p.id === data.id)) {
+            state.muralPosts.unshift(data);
+            renderMural();
+        }
         window.appShowToast('Conquista publicada com sucesso!', 'success');
-        // Realtime will update the list
     }
 };
 
@@ -1345,18 +1346,21 @@ window.appPostServico = async (btn) => {
 
     window.appSetButtonLoading(btn, true);
 
-    const { error } = await sb.from('servicos_posts').insert({
+    const { data, error } = await sb.from('servicos_posts').insert({
         user_email: state.user.email,
         user_name: state.user.name,
         city: cityEl.value,
         need: needEl.value
-    });
+    }).select().single();
 
     if (error) {
         window.appShowToast('Erro ao publicar: ' + error.message, 'error');
     } else {
         cityEl.value = '';
         needEl.value = '';
+        if (data && !state.servicosPosts.find(p => p.id === data.id)) {
+            state.servicosPosts.unshift(data);
+        }
         renderServicos();
         window.appShowToast('Anúncio publicado com sucesso!', 'success');
     }
