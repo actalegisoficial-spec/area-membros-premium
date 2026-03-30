@@ -10,6 +10,29 @@ if (!window.supabaseClient) {
 
 var sb = window.supabaseClient;
 
+// --- FIX 1: Evita execução dupla do showMainApp ---
+let _appInitialized = false;
+
+// --- FIX 9: Sanitização XSS — remove tags HTML perigosas dos campos de texto ---
+function sanitizeHTML(str) {
+    if (!str) return '';
+    return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+// --- FIX 5: refreshIcons com debounce para evitar chamadas excessivas ---
+let _refreshIconsTimer = null;
+function refreshIcons() {
+    clearTimeout(_refreshIconsTimer);
+    _refreshIconsTimer = setTimeout(() => {
+        if (window.lucide) lucide.createIcons();
+    }, 50);
+}
+
 
 // --- CONFIGURAÇÃO DO ESTADO ---
 var state = {
@@ -129,8 +152,8 @@ function init() {
     refreshIcons();
     
     // Check Supabase session instead of localStorage
+    // FIX 4: setupRealtime movido para dentro de showMainApp (abre canais só após login)
     checkSession();
-    setupRealtime();
 }
 
 async function checkSession() {
@@ -140,6 +163,7 @@ async function checkSession() {
     const { data: { session }, error } = await sb.auth.getSession();
     console.log('Acta Members: Sessão encontrada?', !!session, error || '');
 
+    // FIX 1: getSession() pode coexistir com onAuthStateChange, evitamos dupla execução com flag
     if (session) {
         console.log('Acta Members: Sessão ativa, chamando showMainApp...');
         showMainApp();
@@ -147,9 +171,11 @@ async function checkSession() {
 
     sb.auth.onAuthStateChange((event, session) => {
         console.log('Acta Members: Auth State Change:', event, !!session);
-        if ((event === 'SIGNED_IN' || event === 'INITIAL_SESSION') && session) {
+        if (event === 'SIGNED_IN' && session) {
+            // SIGNED_IN é disparado apenas no login real (não em INITIAL_SESSION)
             showMainApp();
         } else if (event === 'SIGNED_OUT') {
+            _appInitialized = false; // Reseta flag para permitir novo login
             document.getElementById('main-layout').classList.remove('active');
             document.getElementById('login-view').classList.add('active');
         }
@@ -420,12 +446,20 @@ function setupEventListeners() {
 
 // --- NAVEGAÇÃO ---
 async function showMainApp() {
+    // FIX 1: Evita dupla execução (getSession + onAuthStateChange SIGNED_IN simultâneos)
+    if (_appInitialized) {
+        console.log('Acta Members: showMainApp já executado, ignorando.');
+        return;
+    }
+    _appInitialized = true;
+
     console.log('Acta Members: Iniciando showMainApp...');
     try {
         if (!sb) return;
         const { data: { user }, error: userError } = await sb.auth.getUser();
         if (userError || !user) {
             console.error('Erro ao obter usuário auth:', userError);
+            _appInitialized = false; // Reseta para tentar novamente
             return;
         }
 
@@ -455,19 +489,19 @@ async function showMainApp() {
         updateGlobalUI();
         switchSubView('dashboard');
 
+        // FIX 4: Abre Realtime só após login confirmado (não para visitantes)
+        setupRealtime();
+
         // 3. BACKGROUND: FETCH DB PROFILE (NON-BLOCKING)
         (async () => {
             try {
-                // OTIMIZAÇÃO: Volta ao select('*') por compatibilidade, mas LIMPA a RAM, apagando o histórico de outros alunos
-                const { data: allUsers } = await sb.from('users').select('*');
+                // FIX 8: Só busca as colunas necessárias. 'completed_activities' NUNCA é necessário
+                // para outros usuários e pode ser um array grande que trafega sem necessidade.
+                const { data: allUsers } = await sb.from('users').select(
+                    'id, email, name, role, points, photo, profession, phone, city, joined_date, is_blocked, verified, bio'
+                );
                 if (allUsers) {
-                    state.allUsers = allUsers.map(u => {
-                        if (u.email !== user.email) {
-                            delete u.completed_activities;
-                            delete u.bio;
-                        }
-                        return u;
-                    });
+                    state.allUsers = allUsers;
                     renderRanking();
                     renderUsers();
                 }
@@ -580,7 +614,7 @@ function renderContent(viewId) {
 // --- COMPONENTES ---
 
 function renderDashboard() {
-    console.log('[Dashboard] Renderizando v2.0...');
+    console.log('[Dashboard] Renderizando v2.1...');
     try {
     const nextLevel = LEVELS[LEVELS.indexOf(state.level) + 1] || 'Limites Alcançados';
     
@@ -942,10 +976,10 @@ async function renderCommunity(selectedTheme = null, searchQuery = null) {
                     ${filteredTopics.map(t => `
                         <div class="topic-item" onclick="window.appShowTopic(${t.id})">
                             <div class="topic-header">
-                                <span style="display: flex; align-items: center; gap: 8px;">[${t.theme}] Por <strong><span class="clickable-user" onclick="event.stopPropagation(); window.appShowUserProfile('${t.user_email}')">${t.user_name || 'Desconhecido'}</span></strong> ${getUserRankBadge(t.user_name || '')}</span>
+                                <span style="display: flex; align-items: center; gap: 8px;">[${sanitizeHTML(t.theme)}] Por <strong><span class="clickable-user" onclick="event.stopPropagation(); window.appShowUserProfile('${sanitizeHTML(t.user_email)}')">${sanitizeHTML(t.user_name) || 'Desconhecido'}</span></strong> ${getUserRankBadge(t.user_email)}</span>
                                 <span>${new Date(t.created_at).toLocaleDateString('pt-BR')}</span>
                             </div>
-                            <div class="topic-title">${t.title}</div>
+                            <div class="topic-title">${sanitizeHTML(t.title)}</div>
                             <div class="topic-meta">
                                 <span style="text-decoration: underline;">Ver discussão</span>
                                 ${state.user.isModerator ? `<button class="btn-delete" onclick="event.stopPropagation(); window.appDeleteTopic(${t.id})"><i data-lucide="trash-2"></i> Excluir</button>` : ''}
@@ -983,14 +1017,14 @@ window.appShowTopic = async (topicId) => {
     const view = document.getElementById('community-view');
     view.innerHTML = `
         <div class="view-header"><h2>Discussão</h2></div>
-        <button class="back-btn" onclick="renderCommunity('${topic.theme}')">← Voltar para ${topic.theme}</button>
+        <button class="back-btn" onclick="renderCommunity('${sanitizeHTML(topic.theme)}')">← Voltar para ${sanitizeHTML(topic.theme)}</button>
         
         <div class="card" style="border-left: 5px solid var(--gold); margin-bottom: 30px;">
             <div class="topic-header" style="display: flex; align-items: center; gap: 8px;">
-                <strong><span class="clickable-user" onclick="window.appShowUserProfile('${topic.user_email}')">${topic.user_name}</span></strong> ${getUserRankBadge(topic.user_name)} • ${new Date(topic.created_at).toLocaleDateString('pt-BR')}
+                <strong><span class="clickable-user" onclick="window.appShowUserProfile('${sanitizeHTML(topic.user_email)}')">${sanitizeHTML(topic.user_name)}</span></strong> ${getUserRankBadge(topic.user_email)} &bull; ${new Date(topic.created_at).toLocaleDateString('pt-BR')}
             </div>
-            <h1 style="color: var(--white); margin: 15px 0;">${topic.title}</h1>
-            <p style="font-size: 1.1rem; line-height: 1.8;">${topic.text}</p>
+            <h1 style="color: var(--white); margin: 15px 0;">${sanitizeHTML(topic.title)}</h1>
+            <p style="font-size: 1.1rem; line-height: 1.8;">${sanitizeHTML(topic.text)}</p>
         </div>
 
         <h3>Respostas (${replies ? replies.length : 0})</h3>
@@ -998,9 +1032,9 @@ window.appShowTopic = async (topicId) => {
             ${(replies && replies.length > 0) ? replies.map(r => `
                 <div class="reply-item">
                     <div class="topic-header" style="margin-bottom: 10px; display: flex; align-items: center; gap: 8px;">
-                        <strong><span class="clickable-user" onclick="window.appShowUserProfile('${r.user_email}')">${r.user_name}</span></strong> ${getUserRankBadge(r.user_name)} • ${new Date(r.created_at).toLocaleDateString('pt-BR')}
+                        <strong><span class="clickable-user" onclick="window.appShowUserProfile('${sanitizeHTML(r.user_email)}')">${sanitizeHTML(r.user_name)}</span></strong> ${getUserRankBadge(r.user_email)} &bull; ${new Date(r.created_at).toLocaleDateString('pt-BR')}
                     </div>
-                    <p>${r.text}</p>
+                    <p>${sanitizeHTML(r.text)}</p>
                     ${(state.user.isModerator || r.user_email === state.user.email) ? `<button class="btn-delete-small" onclick="window.appDeleteReply(${topic.id}, ${r.id})">Excluir</button>` : ''}
                 </div>
             `).join('') : '<div class="empty-state" style="padding: 30px;"><i data-lucide="message-circle"></i><p>Nenhuma resposta ainda. Seja o primeiro a ajudar!</p></div>'}
@@ -1126,19 +1160,19 @@ async function renderMural() {
                 return `
                 <div class="card" style="border-top: 3px solid var(--gold); animation: fadeIn 0.5s ease-out;">
                     <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 5px;">
-                        <div style="width: 36px; height: 36px; border-radius: 50%; background: var(--gold); color: black; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 14px; cursor: pointer;" onclick="window.appShowUserProfile('${p.user_email}')">${p.user_name ? p.user_name.charAt(0).toUpperCase() : '?'}</div>
+                        <div style="width: 36px; height: 36px; border-radius: 50%; background: var(--gold); color: black; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 14px; cursor: pointer;" onclick="window.appShowUserProfile('${sanitizeHTML(p.user_email)}')">${p.user_name ? sanitizeHTML(p.user_name.charAt(0).toUpperCase()) : '?'}</div>
                         <div style="display: flex; flex-direction: column;">
-                            <strong><span class="clickable-user" onclick="window.appShowUserProfile('${p.user_email}')">${p.user_name || 'Desconhecido'}</span></strong>
-                            ${getUserRankBadge(p.user_name || '')}
+                            <strong><span class="clickable-user" onclick="window.appShowUserProfile('${sanitizeHTML(p.user_email)}')">${sanitizeHTML(p.user_name) || 'Desconhecido'}</span></strong>
+                            ${getUserRankBadge(p.user_email)}
                         </div>
                     </div>
-                    <p style="font-size: 1rem; margin: 10px 0; color: #EEE;">${p.text}</p>
+                    <p style="font-size: 1rem; margin: 10px 0; color: #EEE;">${sanitizeHTML(p.text)}</p>
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 15px;">
                         <button class="btn-like" onclick="window.appToggleMuralLike(${p.id}, this)">
                             <i data-lucide="heart" style="${hasLiked ? 'fill: #FF3B30; color: #FF3B30;' : 'color: var(--text-muted);'}"></i> 
                             <span class="like-count">${p.likes || 0}</span>
                         </button>
-                        <div style="font-size: 0.8rem; color: var(--gold); font-weight: 700;">#${p.category}</div>
+                        <div style="font-size: 0.8rem; color: var(--gold); font-weight: 700;">#${sanitizeHTML(p.category)}</div>
                         ${(state.user.isModerator || state.user.email === p.user_email) ? `<button class="btn-delete-small" onclick="window.appDeleteMuralPost(${p.id})">Excluir</button>` : ''}
                     </div>
                 </div>
@@ -1229,14 +1263,18 @@ async function renderServicos(searchQuery = '') {
     const currentUserEmail = state.user.email;
     const isMod = state.user.isModerator;
 
-    // Fetch posts and replies
-    if (state.servicosPosts.length === 0) {
-        view.innerHTML = `<div style="text-align:center; padding: 50px; color: var(--gold);">Carregando serviços...</div>`;
+    // FIX 3: Usa cache local. Só busca o banco se o array estiver vazio.
+    // O Realtime cuida das atualizações em tempo real sem precisar rebuscar tudo.
+    if (state.servicosPosts.length === 0 || searchQuery) {
+        if (state.servicosPosts.length === 0) {
+            view.innerHTML = `<div style="text-align:center; padding: 50px; color: var(--gold);">Carregando serviços...</div>`;
+        }
+        const { data: posts } = await sb.from('servicos_posts').select('*').order('created_at', { ascending: false });
+        if (posts) state.servicosPosts = posts;
     }
-    const { data: posts } = await sb.from('servicos_posts').select('*').order('created_at', { ascending: false });
+
+    // Respostas: busca sempre que a view abre (são leves e vinculadas por post)
     const { data: allReplies } = await sb.from('servicos_replies').select('*').order('created_at', { ascending: true });
-    
-    state.servicosPosts = posts || [];
     const servicosReplies = allReplies || [];
 
     const filteredPosts = state.servicosPosts.filter(p => {
@@ -1753,19 +1791,40 @@ function renderPerfil() {
 
 window.appPreviewPhoto = (event) => {
     const file = event.target.files[0];
-    if (file) {
-        const reader = new FileReader();
-        reader.onload = (e) => {
-            const result = e.target.result;
-            document.getElementById('perfil-photo-base64').value = result;
+    if (!file) return;
+
+    // FIX 2: Comprime a imagem ANTES de salvar — evita base64 de 270KB no banco
+    // Redimensiona para no máximo 150x150px e comprime para JPEG qualidade 60%
+    const reader = new FileReader();
+    reader.onload = (e) => {
+        const img = new Image();
+        img.onload = () => {
+            // Cria canvas de 150x150 para miniatura quadrada
+            const MAX_SIZE = 150;
+            const canvas = document.createElement('canvas');
+            canvas.width = MAX_SIZE;
+            canvas.height = MAX_SIZE;
+            const ctx = canvas.getContext('2d');
+
+            // Crop inteligente: centraliza e recorta para quadrado
+            const side = Math.min(img.width, img.height);
+            const sx = (img.width - side) / 2;
+            const sy = (img.height - side) / 2;
+            ctx.drawImage(img, sx, sy, side, side, 0, 0, MAX_SIZE, MAX_SIZE);
+
+            // Converte para JPEG qualidade 0.60 (~10x menor que base64 raw)
+            const compressed = canvas.toDataURL('image/jpeg', 0.60);
+
+            document.getElementById('perfil-photo-base64').value = compressed;
             const preview = document.getElementById('perfil-photo-preview');
-            preview.src = result;
+            preview.src = compressed;
             preview.style.display = 'block';
             const icon = document.getElementById('perfil-photo-icon');
             if (icon) icon.style.display = 'none';
         };
-        reader.readAsDataURL(file);
-    }
+        img.src = e.target.result;
+    };
+    reader.readAsDataURL(file);
 };
 
 window.appSavePerfil = async (btn) => {
@@ -2004,45 +2063,45 @@ window.appShowUserProfile = async (emailOrName) => {
     const rankBadge = getUserRankBadge(user.email);
     const photoHtml = user.photo 
         ? `<img src="${user.photo}" style="width: 120px; height: 120px; border-radius: 50%; object-fit: cover; border: 3px solid var(--gold); margin-bottom: 15px;">`
-        : `<div style="width: 120px; height: 120px; border-radius: 50%; background: var(--gold); color: black; display: flex; align-items: center; justify-content: center; font-size: 48px; font-weight: bold; border: 3px solid var(--gold); margin-bottom: 15px;">${user.name.charAt(0).toUpperCase()}</div>`;
+        : `<div style="width: 120px; height: 120px; border-radius: 50%; background: var(--gold); color: black; display: flex; align-items: center; justify-content: center; font-size: 48px; font-weight: bold; border: 3px solid var(--gold); margin-bottom: 15px;">${sanitizeHTML(user.name.charAt(0).toUpperCase())}</div>`;
 
     const body = `
         <div style="text-align: center; padding: 10px 0;">
             ${photoHtml}
-            <h2 style="color: var(--white); margin-bottom: 5px;">${user.name}</h2>
+            <h2 style="color: var(--white); margin-bottom: 5px;">${sanitizeHTML(user.name)}</h2>
             <div style="margin-bottom: 20px;">${rankBadge}</div>
             
             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; text-align: left; background: rgba(255,255,255,0.03); padding: 20px; border-radius: 12px; margin-bottom: 20px; border: 1px solid rgba(255,255,255,0.05);">
                 <div>
                     <label style="color: var(--gold); font-size: 0.75rem; text-transform: uppercase; font-weight: 700; display: block; margin-bottom: 4px;">Profissão</label>
-                    <div style="color: #EEE; font-size: 0.95rem;">${user.profession || 'Não informado'}</div>
+                    <div style="color: #EEE; font-size: 0.95rem;">${sanitizeHTML(user.profession) || 'Não informado'}</div>
                 </div>
                 <div>
                     <label style="color: var(--gold); font-size: 0.75rem; text-transform: uppercase; font-weight: 700; display: block; margin-bottom: 4px;">Cidade</label>
-                    <div style="color: #EEE; font-size: 0.95rem;">${user.city || 'Não informado'}</div>
+                    <div style="color: #EEE; font-size: 0.95rem;">${sanitizeHTML(user.city) || 'Não informado'}</div>
                 </div>
                 <div style="grid-column: span 2;">
                     <label style="color: var(--gold); font-size: 0.75rem; text-transform: uppercase; font-weight: 700; display: block; margin-bottom: 4px;">E-mail</label>
-                    <div style="color: #EEE; font-size: 0.95rem;">${user.email}</div>
+                    <div style="color: #EEE; font-size: 0.95rem;">${sanitizeHTML(user.email)}</div>
                 </div>
             </div>
             
             <div style="text-align: left;">
                 <label style="color: var(--gold); font-size: 0.75rem; text-transform: uppercase; font-weight: 700; display: block; margin-bottom: 8px;">Sobre Mim</label>
                 <div style="color: #CCC; line-height: 1.6; font-size: 1rem; font-style: ${user.bio ? 'normal' : 'italic'}; background: rgba(0,0,0,0.2); padding: 15px; border-radius: 8px; border-left: 3px solid var(--gold);">
-                    ${user.bio || 'Este usuário ainda não escreveu um resumo.'}
+                    ${sanitizeHTML(user.bio) || 'Este usuário ainda não escreveu um resumo.'}
                 </div>
             </div>
             
             ${state.user.isModerator ? `
-                <button class="btn btn-secondary" style="margin-top: 25px; width: 100%; border-color: rgba(212,175,55,0.3);" onclick="window.appShowUserHistory('${user.email}')">
+                <button class="btn btn-secondary" style="margin-top: 25px; width: 100%; border-color: rgba(212,175,55,0.3);" onclick="window.appShowUserHistory('${sanitizeHTML(user.email)}')">
                     <i data-lucide="history" style="width: 16px; height: 16px;"></i> Ver Histórico Acadêmico
                 </button>
             ` : ''}
         </div>
     `;
 
-    appShowModal(`Perfil de ${user.name}`, body, null);
+    appShowModal(`Perfil de ${sanitizeHTML(user.name)}`, body, null);
     
     // Esconde o botão de confirmar pois é apenas visualização
     const confirmBtn = document.getElementById('modal-confirm-btn');
