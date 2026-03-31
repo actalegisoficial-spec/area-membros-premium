@@ -506,10 +506,9 @@ async function showMainApp() {
         // 3. BACKGROUND: FETCH DB PROFILE (NON-BLOCKING)
         (async () => {
             try {
-                // FIX 8: Só busca as colunas necessárias. 'completed_activities' NUNCA é necessário
-                // para outros usuários e pode ser um array grande que trafega sem necessidade.
+                // Busca as colunas necessárias e a lista de atividades ('completed_activities') para não zerar o progresso visual.
                 const { data: allUsers } = await sb.from('users').select(
-                    'id, email, name, role, points, photo, profession, phone, city, joined_date, is_blocked, verified, bio'
+                    'id, email, name, role, points, photo, profession, phone, city, joined_date, is_blocked, verified, bio, completed_activities'
                 );
                 if (allUsers) {
                     state.allUsers = allUsers;
@@ -552,6 +551,9 @@ async function showMainApp() {
                 updateLevel();
                 updateGlobalUI();
                 renderProgress();
+                if (document.getElementById('dashboard-view').classList.contains('active')) {
+                    renderDashboard();
+                }
 
                 // Busca as franquias (Membros normais vêem apenas a sua, Admins vêem todas graças ao RLS do PostgreSQL)
                 try {
