@@ -446,6 +446,13 @@ function setupEventListeners() {
         };
     }
 
+    // Disponibiliza doLogout globalmente para o dropdown do perfil no top-bar
+    window.doLogout = async () => {
+        await sb.auth.signOut();
+        localStorage.clear();
+        location.reload();
+    };
+
     document.querySelectorAll('.nav-item, .mobile-nav-item').forEach(item => {
         item.onclick = () => {
             const viewName = item.getAttribute('data-view');
@@ -528,9 +535,22 @@ async function showMainApp() {
                         sb.from('users').update({ role: 'Administrador' }).eq('email', user.email).then();
                     }
                     state.user.isModerator = profile.role === 'Administrador' || isOwner;
-                    state.points = profile.points || 0;
+
                     const completedIds = profile.completed_activities || [];
                     state.activities.forEach(a => { a.completed = completedIds.includes(a.id); });
+
+                    // Recalcular pontos localmente com base nas atividades marcadas.
+                    // Isso evita que o banco fique defasado e garante consistência visual.
+                    const localPoints = state.activities.filter(a => a.completed).reduce((sum, a) => sum + (a.pts || 0), 0);
+
+                    if (localPoints !== (profile.points || 0)) {
+                        // Divergencia detectada: corrigir no banco silenciosamente
+                        console.warn(`[Pontos] Banco=${profile.points} vs Local=${localPoints}. Corrigindo...`);
+                        sb.from('users').update({ points: localPoints }).eq('email', user.email).then();
+                        // Atualiza o objeto no state.allUsers também
+                        if (profile) profile.points = localPoints;
+                    }
+                    state.points = localPoints;
                 } else {
                     const newProfile = {
                         id: user.id, // Vínculo obrigatório com Auth para o RLS funcionar
