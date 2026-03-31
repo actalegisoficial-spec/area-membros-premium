@@ -6,7 +6,7 @@
     <title>Acta Members - Área de Membros Premium</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Outfit:wght@400;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="styles.css">
     <!-- Lucide Icons -->
     <script src="https://unpkg.com/lucide@latest"></script>
@@ -249,12 +249,6 @@
                     <li class="nav-item active" data-view="dashboard">
                         <i data-lucide="layout-dashboard"></i> <span>Início</span>
                     </li>
-                    <li class="nav-item" data-view="perfil">
-                        <i data-lucide="user"></i> <span>Meu Perfil</span>
-                    </li>
-                    <li class="nav-item" data-view="progress">
-                        <i data-lucide="check-circle"></i> <span>Meu Progresso</span>
-                    </li>
                     <li class="nav-item" data-view="ranking">
                         <i data-lucide="trophy"></i> <span>Ranking</span>
                     </li>
@@ -267,27 +261,75 @@
                     <li class="nav-item" data-view="mural">
                         <i data-lucide="image"></i> <span>Mural</span>
                     </li>
+                    <li class="nav-item" data-view="franquias">
+                        <i data-lucide="store"></i> <span>Seja um franqueado</span>
+                    </li>
                     <li class="nav-item admin-only" data-view="users" style="display: none;">
                         <i data-lucide="users-round"></i> <span>Usuários</span>
                     </li>
                 </ul>
                 <div class="sidebar-footer">
-                    <button id="logout-btn" class="btn-icon"><i data-lucide="log-out"></i> Sair</button>
+                    <!-- Sair foi movido para o Dropdown do Perfil no Topo -->
                 </div>
             </nav>
 
             <main class="content-area">
                 <header class="top-bar">
-                    <div class="user-greeting">
-                        <span id="greeting-text">Olá, Aluno!</span>
+                    <div class="view-title" id="top-bar-title" style="font-family: 'Outfit', sans-serif; font-size: 1.6rem; font-weight: 700; color: var(--white);">
+                        Início
                     </div>
-                    <div style="display: flex; align-items: center; gap: 12px;">
-                        <div class="points-badge">
-                            <i data-lucide="landmark"></i> <span id="header-points">0 pts</span>
+                    
+                    <div class="top-bar-right-container" style="display: flex; align-items: center; gap: 20px;">
+                        
+                        <!-- Acesso Rápido na Top-Bar -->
+                        <div class="top-bar-actions" style="display: flex; gap: 12px;">
+                            <a href="https://chatgpt.com/g/g-69b9959b9c6481919f727e21df289ca4-charles-nunes-expert-1-0-para-alunos"
+                               target="_blank" rel="noopener noreferrer"
+                               class="tb-action-btn tb-action-ai" title="IA do Charles">
+                                <span class="tb-action-icon">🤖</span>
+                                <span class="tb-action-text">IA Acta</span>
+                            </a>
+                            
+                            <a href="https://chat.whatsapp.com/HYoaOsDq6x4HvfvQylgi4H?mode=gi_t"
+                               target="_blank" rel="noopener noreferrer"
+                               class="tb-action-btn tb-action-zap" title="Comunidade WhatsApp">
+                                <span class="tb-action-icon">💬</span>
+                                <span class="tb-action-text">Grupo VIP</span>
+                            </a>
                         </div>
-                        <button class="btn-logout-mobile" onclick="window.doLogout()" title="Sair da conta">
-                            <i data-lucide="log-out"></i> <span>Sair</span>
-                        </button>
+
+                        <div class="m3-profile-pill">
+                        <!-- Points and Progress section acting as a button -->
+                        <div class="m3-progress-section" onclick="window.appShowProgress()" title="Ver Meu Progresso">
+                            <div class="m3-points">
+                                <i data-lucide="landmark"></i> <span id="header-points">0 pts</span>
+                            </div>
+                            <div class="m3-progress-bar-container">
+                                <div class="m3-progress-bar-fill" id="header-progress-bar" style="width: 0%;"></div>
+                            </div>
+                        </div>
+
+                        <!-- Avatar Section acting as profile trigger / dropdown -->
+                        <div class="m3-avatar-section" id="m3-avatar-trigger" tabindex="0">
+                            <div id="greeting-avatar" class="m3-avatar-wrapper">
+                                <div class="topbar-avatar-placeholder" style="background: var(--gold); color: black;">A</div>
+                            </div>
+                            <!-- Dropdown Menu -->
+                            <div class="m3-dropdown-menu" id="profile-dropdown">
+                                <div class="m3-dropdown-header">
+                                    <span id="greeting-name" style="font-weight: 600; font-size: 1.1rem; color: var(--white);">Olá, Aluno!</span>
+                                    <div id="greeting-badge" style="margin-top: 4px;"></div>
+                                </div>
+                                <div class="m3-dropdown-divider"></div>
+                                <div class="m3-dropdown-item" onclick="window.appSwitchSubView('perfil')">
+                                    <i data-lucide="user"></i> Meu Perfil
+                                </div>
+                                <div class="m3-dropdown-item text-danger" onclick="window.doLogout()">
+                                    <i data-lucide="log-out"></i> Sair
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                     </div>
                 </header>
 
@@ -309,6 +351,9 @@
                 <div id="mural-view" class="sub-view">
                     <!-- Mural content -->
                 </div>
+                <div id="franquias-view" class="sub-view">
+                    <!-- Franquias content -->
+                </div>
                 <div id="users-view" class="sub-view">
                     <!-- Users content -->
                 </div>
@@ -320,12 +365,11 @@
             <!-- Mobile Navbar -->
             <nav class="mobile-nav">
                 <div class="mobile-nav-item active" data-view="dashboard"><i data-lucide="home"></i></div>
-                <div class="mobile-nav-item" data-view="perfil"><i data-lucide="user"></i></div>
-                <div class="mobile-nav-item" data-view="progress"><i data-lucide="check-circle"></i></div>
                 <div class="mobile-nav-item" data-view="ranking"><i data-lucide="trophy"></i></div>
                 <div class="mobile-nav-item" data-view="community"><i data-lucide="users"></i></div>
                 <div class="mobile-nav-item" data-view="servicos"><i data-lucide="briefcase"></i></div>
                 <div class="mobile-nav-item" data-view="mural"><i data-lucide="image"></i></div>
+                <div class="mobile-nav-item" data-view="franquias"><i data-lucide="store"></i></div>
                 <div class="mobile-nav-item admin-only" data-view="users" style="display: none;"><i data-lucide="users-round"></i></div>
             </nav>
         </div>

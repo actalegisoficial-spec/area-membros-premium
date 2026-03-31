@@ -92,6 +92,7 @@ var state = {
     muralPosts: [],
     communityTopics: [],
     servicosPosts: [],
+    franchiseRequests: [],
     isModerator: false,
     allUsers: []
 };
@@ -306,6 +307,16 @@ function setupRealtime() {
                 const searchInput = document.getElementById('servicos-search-input');
                 renderServicos(searchInput ? searchInput.value : '');
             }
+        })
+        .subscribe();
+
+    // --- FRANQUIAS ---
+    sb
+        .channel('public:franchise_requests')
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'franchise_requests' }, (payload) => {
+            applyPayloadToArray(state.franchiseRequests, payload);
+            if (document.getElementById('franquias-view').classList.contains('active')) renderFranquias();
+            if (document.getElementById('users-view').classList.contains('active')) renderUsers();
         })
         .subscribe();
 }
@@ -541,6 +552,17 @@ async function showMainApp() {
                 updateLevel();
                 updateGlobalUI();
                 renderProgress();
+
+                // Busca as franquias (Membros normais vêem apenas a sua, Admins vêem todas graças ao RLS do PostgreSQL)
+                try {
+                    const { data: frReqs } = await sb.from('franchise_requests').select('*').order('created_at', { ascending: false });
+                    if (frReqs) {
+                        state.franchiseRequests = frReqs;
+                        if (document.getElementById('franquias-view').classList.contains('active')) renderFranquias();
+                        if (document.getElementById('users-view').classList.contains('active')) renderUsers();
+                    }
+                } catch(e) { console.warn('Erro ao carregar franquias:', e); }
+
             } catch (err) {
                 console.warn('Erro ao carregar dados do banco:', err);
             }
@@ -552,22 +574,31 @@ async function showMainApp() {
 }
 
 function updateGlobalUI() {
-    const greeting = document.getElementById('greeting-text');
     const headerPoints = document.getElementById('header-points');
+    const avatarWrapper = document.getElementById('greeting-avatar');
+    const greetingName = document.getElementById('greeting-name');
+    const greetingBadge = document.getElementById('greeting-badge');
+    const progressBar = document.getElementById('header-progress-bar');
+    
     const user = state.allUsers.find(u => u.email === state.user.email) || {};
 
-    if (greeting) {
-        let photoHtml = user.photo ? `<img src="${user.photo}" class="topbar-avatar" style="width: 32px; height: 32px; border-radius: 50%; object-fit: cover; margin-right: 10px; vertical-align: middle;">` : `<div class="topbar-avatar-placeholder" style="width: 32px; height: 32px; border-radius: 50%; background: var(--gold); color: black; display: inline-flex; align-items: center; justify-content: center; margin-right: 10px; font-weight: bold; font-size: 14px; vertical-align: middle;">${state.user.name.charAt(0).toUpperCase()}</div>`;
-        greeting.innerHTML = `<div style="display: flex; align-items: center;">
-            ${photoHtml}
-            <div style="display: flex; flex-direction: column; line-height: 1.2;">
-                <span>Olá, ${state.user.name}!</span>
-                ${getUserRankBadge(state.user.email)}
-            </div>
-        </div>`;
+    if (avatarWrapper) {
+        if (user.photo) {
+            avatarWrapper.innerHTML = `<img src="${user.photo}" style="width: 100%; height: 100%; object-fit: cover;">`;
+        } else {
+            avatarWrapper.innerHTML = `<div class="topbar-avatar-placeholder" style="background: var(--gold); color: black;">${state.user.name.charAt(0).toUpperCase()}</div>`;
+        }
     }
+
+    if (greetingName) {
+        greetingName.textContent = `Olá, ${state.user.name.split(' ')[0]}!`;
+    }
+    
+    if (greetingBadge) {
+        greetingBadge.innerHTML = getUserRankBadge(state.user.email);
+    }
+
     if (headerPoints) {
-        // We only animate if the value actually changed and it's not the initial load
         const currentVal = parseInt(headerPoints.textContent.replace(/\./g, '')) || 0;
         if (currentVal !== state.points) {
             animatePoints('header-points', currentVal, state.points);
@@ -575,16 +606,39 @@ function updateGlobalUI() {
             headerPoints.textContent = `${formatPoints(state.points)} pts`;
         }
     }
+    
+    if (progressBar) {
+        let progressPercent = 0;
+        if (state.points <= 1610) {
+            progressPercent = (state.points / 1610) * 85; 
+        } else {
+            progressPercent = 85 + Math.min(13, ((state.points - 1610) / 15000) * 13);
+        }
+        progressBar.style.width = `${progressPercent}%`;
+    }
 }
 
+window.appSwitchSubView = switchSubView; // Export for dropdown
+
 function switchSubView(viewId) {
+    let viewTitle = 'Início';
+    
     document.querySelectorAll('.nav-item, .mobile-nav-item').forEach(nav => {
         if (nav.getAttribute('data-view') === viewId) {
             nav.classList.add('active');
+            let span = nav.querySelector('span');
+            if(span) viewTitle = span.textContent;
         } else {
             nav.classList.remove('active');
         }
     });
+
+    if(viewId === 'perfil') viewTitle = 'Meu Perfil';
+    if(viewId === 'progress') viewTitle = 'Meu Progresso';
+    if(viewId === 'franquias') viewTitle = 'Franquias Acta';
+
+    const topBarTitle = document.getElementById('top-bar-title');
+    if (topBarTitle) topBarTitle.textContent = viewTitle;
 
     document.querySelectorAll('.sub-view').forEach(view => {
         if (view.id === `${viewId}-view`) {
@@ -605,6 +659,7 @@ function renderContent(viewId) {
         case 'community': renderCommunity(); break;
         case 'servicos': renderServicos(); break;
         case 'mural': renderMural(); break;
+        case 'franquias': renderFranquias(); break;
         case 'users': renderUsers(); break;
         case 'perfil': renderPerfil(); break;
     }
@@ -612,6 +667,107 @@ function renderContent(viewId) {
 }
 
 // --- COMPONENTES ---
+
+window.appRequestFranchise = async () => {
+    const btn = document.getElementById('btn-franquia');
+    if(btn) {
+        btn.disabled = true;
+        btn.innerHTML = `<i data-lucide="loader-2" class="spin"></i> Processando...`;
+        refreshIcons();
+    }
+    
+    // Obter ID original do usuário na tabela de users (necessário para a FK)
+    const userRow = state.allUsers.find(u => u.email === state.user.email);
+    const userId = userRow ? userRow.id : null;
+
+    if (!userId) {
+        window.appShowToast('Erro ao identificar seu usuário. Tente novamente.', 'error');
+        if(btn) { btn.disabled = false; btn.innerHTML = `<i data-lucide="briefcase"></i> Seja um franqueado`; refreshIcons(); }
+        return;
+    }
+
+    const payload = {
+        user_id: userId,
+        user_email: state.user.email,
+        user_name: state.user.name,
+        status: 'pending'
+    };
+
+    const { error } = await sb.from('franchise_requests').insert(payload);
+    
+    if (error) {
+        window.appShowToast('Falha na solicitação: ' + error.message, 'error');
+        if(btn) { btn.disabled = false; btn.innerHTML = `<i data-lucide="briefcase"></i> Seja um franqueado`; refreshIcons(); }
+    } else {
+        window.appShowToast('Solicitação enviada! Em breve avaliaremos seu perfil.', 'success');
+        // O realtime atualizará o state.franchiseRequests e renderFranquias
+    }
+};
+
+function renderFranquias() {
+    const view = document.getElementById('franquias-view');
+    if (!view) return;
+
+    // Verificar se o usuário já tem uma solicitação
+    const existingReq = state.franchiseRequests.find(r => r.user_email === state.user.email);
+
+    let btnHtml = '';
+    if (existingReq) {
+        let statusText = 'Em Análise';
+        let statusColor = 'var(--gold)';
+        if (existingReq.status === 'approved') { statusText = 'Aprovado'; statusColor = '#34C759'; }
+        if (existingReq.status === 'rejected') { statusText = 'Recusado'; statusColor = '#FF3B30'; }
+
+        btnHtml = `
+            <div style="display:inline-flex; align-items:center; gap:10px; padding:15px 30px; border-radius:50px; border:2px solid ${statusColor}; color:${statusColor}; font-weight:700; font-size:1.1rem;">
+                <i data-lucide="${existingReq.status === 'approved' ? 'check-circle' : (existingReq.status === 'rejected' ? 'x-circle' : 'clock')}"></i> Solicitação: ${statusText}
+            </div>
+        `;
+    } else {
+        btnHtml = `
+            <button id="btn-franquia" class="btn-franquia-primary" onclick="window.appRequestFranchise()">
+                <i data-lucide="briefcase"></i> Seja um franqueado
+            </button>
+        `;
+    }
+
+    view.innerHTML = `
+        <div class="franquias-hero">
+            <h2>Expanda seus Resultados</h2>
+            <p>Torne-se um Franqueado Acta e tenha acesso a nossa marca, suporte jurídico avançado e captação de clientes em escala na sua região.</p>
+        </div>
+        
+        <div class="view-header" style="text-align: center;">
+            <h3 style="font-size: 1.8rem;">Como se tornar um franqueado Acta?</h3>
+        </div>
+
+        <div class="franquias-steps">
+            <div class="f-step-card">
+                <div class="f-step-number">1</div>
+                <i data-lucide="user-plus" style="width: 40px; height: 40px; color: var(--gold); margin-bottom: 10px;"></i>
+                <h3>Inscrever-se na Acta</h3>
+                <p>O primeiro passo é ser um membro ativo da nossa plataforma Premium.</p>
+            </div>
+            <div class="f-step-card">
+                <div class="f-step-number">2</div>
+                <i data-lucide="graduation-cap" style="width: 40px; height: 40px; color: var(--gold); margin-bottom: 10px;"></i>
+                <h3>Fazer o Curso</h3>
+                <p>Consuma todo o conteúdo, marque seu progresso e atinja os níveis superiores.</p>
+            </div>
+            <div class="f-step-card">
+                <div class="f-step-number">3</div>
+                <i data-lucide="line-chart" style="width: 40px; height: 40px; color: var(--gold); margin-bottom: 10px;"></i>
+                <h3>Análise e Aprovação</h3>
+                <p>Solicite a avaliação do seu perfil clicando no botão abaixo.</p>
+            </div>
+        </div>
+
+        <div class="franquias-cta-container">
+            ${btnHtml}
+            <p style="margin-top: 15px; color: var(--text-muted); font-size: 0.9rem;">Sua solicitação será analisada com base no seu nível e engajamento na plataforma.</p>
+        </div>
+    `;
+}
 
 function renderDashboard() {
     console.log('[Dashboard] Renderizando v2.1...');
@@ -656,42 +812,6 @@ function renderDashboard() {
         <div class="card" style="margin-top: 20px; text-align: center; border-top: 5px solid var(--gold);">
             <h3>Pronto para registrar mais um passo?</h3>
             <button class="btn btn-primary" style="margin-top: 15px;" onclick="window.appShowProgress()">Marcar Meu Progresso</button>
-        </div>
-
-        <!-- ACESSO RÁPIDO -->
-        <div style="margin-top: 24px;">
-            <div class="card-title" style="margin-bottom: 14px; font-size: 0.85rem; letter-spacing: 1px; text-transform: uppercase; color: var(--text-muted);">Acesso Rápido</div>
-            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 16px;">
-
-                <!-- Botão IA -->
-                <a href="https://chatgpt.com/g/g-69b9959b9c6481919f727e21df289ca4-charles-nunes-expert-1-0-para-alunos"
-                   target="_blank" rel="noopener noreferrer"
-                   style="text-decoration: none; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px;
-                          background: linear-gradient(135deg, #6a0dad 0%, #3b82f6 100%);
-                          border-radius: 16px; padding: 24px 16px; cursor: pointer;
-                          transition: transform 0.2s ease, box-shadow 0.2s ease; box-shadow: 0 4px 20px rgba(106,13,173,0.35);"
-                   onmouseover="this.style.transform='translateY(-4px)';this.style.boxShadow='0 8px 30px rgba(106,13,173,0.55)'"
-                   onmouseout="this.style.transform='translateY(0)';this.style.boxShadow='0 4px 20px rgba(106,13,173,0.35)'">
-                    <div style="font-size: 2.2rem;">🤖</div>
-                    <div style="color: white; font-weight: 700; font-size: 1rem; text-align: center;">IA do Charles</div>
-                    <div style="color: rgba(255,255,255,0.75); font-size: 0.8rem; text-align: center;">Tire suas dúvidas com o Expert</div>
-                </a>
-
-                <!-- Botão WhatsApp -->
-                <a href="https://chat.whatsapp.com/HYoaOsDq6x4HvfvQylgi4H?mode=gi_t"
-                   target="_blank" rel="noopener noreferrer"
-                   style="text-decoration: none; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px;
-                          background: linear-gradient(135deg, #128C7E 0%, #25D366 100%);
-                          border-radius: 16px; padding: 24px 16px; cursor: pointer;
-                          transition: transform 0.2s ease, box-shadow 0.2s ease; box-shadow: 0 4px 20px rgba(37,211,102,0.35);"
-                   onmouseover="this.style.transform='translateY(-4px)';this.style.boxShadow='0 8px 30px rgba(37,211,102,0.55)'"
-                   onmouseout="this.style.transform='translateY(0)';this.style.boxShadow='0 4px 20px rgba(37,211,102,0.35)'">
-                    <div style="font-size: 2.2rem;">💬</div>
-                    <div style="color: white; font-weight: 700; font-size: 1rem; text-align: center;">Grupo WhatsApp</div>
-                    <div style="color: rgba(255,255,255,0.75); font-size: 0.8rem; text-align: center;">Entre na comunidade exclusiva</div>
-                </a>
-
-            </div>
         </div>
     `;
     } catch(e) {
@@ -1670,6 +1790,39 @@ function renderUsers() {
                                         ${u.is_blocked ? 'Desbloquear' : 'Bloquear'}
                                     </button>
                                 </td>
+                            </tr>
+                            `;
+                        }).join('')}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="view-header" style="margin-top: 40px;">
+            <h3>Possíveis Parceiros</h3>
+            <p style="font-size: 0.95rem; color: var(--text-muted);">Alunos que sinalizaram interesse em se tornarem franqueados.</p>
+        </div>
+        <div class="card" style="padding: 0;">
+            <div class="table-container" style="overflow-x: auto; max-height: 400px; overflow-y: auto;">
+                <table class="premium-table">
+                    <thead>
+                        <tr>
+                            <th>Data</th>
+                            <th>Nome</th>
+                            <th>E-mail</th>
+                            <th>Status (DB)</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${state.franchiseRequests.length === 0 ? '<tr><td colspan="4" style="text-align:center; color:var(--text-muted);">Nenhum interessado ainda.</td></tr>' : ''}
+                        ${state.franchiseRequests.map(r => {
+                            const dateStr = new Date(r.created_at).toLocaleDateString('pt-BR', { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit'});
+                            return `
+                            <tr>
+                                <td style="color:var(--text-muted);">${dateStr}</td>
+                                <td style="font-weight:700; color:var(--white);">${r.user_name}</td>
+                                <td>${r.user_email}</td>
+                                <td><span class="status-indicator status-${r.status === 'pending' ? 'blocked' : 'active'}">${r.status}</span></td>
                             </tr>
                             `;
                         }).join('')}
