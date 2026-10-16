@@ -15,13 +15,53 @@ let _appInitialized = false;
 
 // --- FIX 9: Sanitização XSS — remove tags HTML perigosas dos campos de texto ---
 function sanitizeHTML(str) {
-    if (!str) return '';
+    if (str === null || str === undefined) return '';
     return String(str)
         .replace(/&/g, '&amp;')
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&#39;');
+}
+
+// Escapa um valor para uso DENTRO de uma string JS em atributo onclick="fn('...')"
+function jsArg(str) {
+    const s = String(str === null || str === undefined ? '' : str)
+        .replace(/\\/g, '\\\\')
+        .replace(/'/g, "\\'")
+        .replace(/"/g, '\\"')
+        .replace(/\r?\n/g, '\\n')
+        .replace(/</g, '\\x3c')
+        .replace(/>/g, '\\x3e');
+    return sanitizeHTML(s);
+}
+
+// Aceita apenas imagens seguras (base64 de imagem ou https)
+function safeImg(url) {
+    if (!url) return '';
+    const u = String(url).trim();
+    if (/^data:image\/(png|jpe?g|gif|webp);base64,[a-z0-9+/=\s]+$/i.test(u) || /^https:\/\//i.test(u)) {
+        return sanitizeHTML(u);
+    }
+    return '';
+}
+
+const BLOCKED_MSG = 'Seu acesso está bloqueado. Entre em contato com o suporte da Acta.';
+
+function showLoginScreen(tab, msg, isError) {
+    document.getElementById('main-layout').classList.remove('active');
+    document.getElementById('login-view').classList.add('active');
+    window.appSwitchAuthTab(tab || 'login');
+    if (msg) {
+        const el = document.getElementById(tab === 'reset' ? 'reset-error' : 'login-error');
+        if (el) { el.textContent = msg; el.style.color = isError ? '#FF3B30' : '#2ECC71'; }
+    }
+}
+
+async function forceLogoutBlocked() {
+    _appInitialized = false;
+    try { await sb.auth.signOut(); } catch (e) {}
+    showLoginScreen('login', BLOCKED_MSG, true);
 }
 
 // --- FIX 5: refreshIcons com debounce para evitar chamadas excessivas ---
@@ -164,16 +204,38 @@ async function checkSession() {
     const { data: { session }, error } = await sb.auth.getSession();
     console.log('Acta Members: Sessão encontrada?', !!session, error || '');
 
-    // FIX 1: getSession() pode coexistir com onAuthStateChange, evitamos dupla execução com flag
-    if (session) {
+    // Link do e-mail com erro (ex.: link expirado)
+    if (window.__authLinkError) {
+        showLoginScreen(window.__authRecovery ? 'forgot' : 'login',
+            'Link expirado ou inválido. Peça um novo link abaixo.', true);
+        window.__authRecovery = false;
+        history.replaceState(null, '', window.location.pathname);
+    } else if (window.__authRecovery) {
+        // Veio do link "Esqueci minha senha": mostra a tela de nova senha em vez de entrar
+        showLoginScreen('reset');
+        if (!session) {
+            // Sessão pode chegar logo depois (evento PASSWORD_RECOVERY); senão, link inválido
+            setTimeout(async () => {
+                const { data } = await sb.auth.getSession();
+                if (!data.session && window.__authRecovery) {
+                    showLoginScreen('forgot', 'Link expirado ou inválido. Peça um novo link abaixo.', true);
+                }
+            }, 2500);
+        }
+    } else if (session) {
+        // FIX 1: getSession() pode coexistir com onAuthStateChange, evitamos dupla execução com flag
         console.log('Acta Members: Sessão ativa, chamando showMainApp...');
         showMainApp();
     }
 
     sb.auth.onAuthStateChange((event, session) => {
         console.log('Acta Members: Auth State Change:', event, !!session);
-        if (event === 'SIGNED_IN' && session) {
-            // SIGNED_IN é disparado apenas no login real (não em INITIAL_SESSION)
+        if (event === 'PASSWORD_RECOVERY') {
+            window.__authRecovery = true;
+            showLoginScreen('reset');
+        } else if (event === 'SIGNED_IN' && session) {
+            // Durante a troca de senha não entra na plataforma
+            if (window.__authRecovery) return;
             showMainApp();
         } else if (event === 'SIGNED_OUT') {
             _appInitialized = false; // Reseta flag para permitir novo login
@@ -185,7 +247,7 @@ async function checkSession() {
 
 // --- AUTH SCREEN SWITCHER (global so onclick links work immediately) ---
 window.appSwitchAuthTab = (tab) => {
-    ['login', 'signup', 'forgot'].forEach(t => {
+    ['login', 'signup', 'forgot', 'reset'].forEach(t => {
         const el = document.getElementById(`auth-${t}`);
         if (el) el.style.display = t === tab ? 'block' : 'none';
     });
@@ -269,7 +331,12 @@ function setupRealtime() {
                     }
                     // Se for o próprio usuário logado, atualiza pontos/nível/UI
                     if (state.user && newRow.email === state.user.email) {
-                        state.points = newRow.points || state.points;
+                        // Admin bloqueou este usuário enquanto ele estava online
+                        if (newRow.is_blocked === true && !state.user.isOwner) {
+                            forceLogoutBlocked();
+                            return;
+                        }
+                        if (typeof newRow.points === 'number') state.points = newRow.points;
                         updateLevel();
                         updateGlobalUI();
                     }
@@ -484,6 +551,15 @@ async function showMainApp() {
         const ownerEmail = 'charlesnunes77@yahoo.com.br'.toLowerCase();
         const userEmail = user.email.toLowerCase();
         const isOwner = userEmail === ownerEmail; // Estritamente logado como dono
+
+        // 0. BLOQUEIO: verifica antes de mostrar qualquer conteúdo
+        if (!isOwner) {
+            const { data: me, error: meErr } = await sb.from('users').select('is_blocked').eq('email', userEmail).maybeSingle();
+            if (!meErr && me && me.is_blocked === true) {
+                await forceLogoutBlocked();
+                return;
+            }
+        }
         
         // 1. SET BASIC STATE AND SHOW MAIN UI IMMEDIATELY
         localStorage.setItem('userEmail', userEmail);
@@ -492,7 +568,8 @@ async function showMainApp() {
         state.user = { 
             email: userEmail, 
             name: user.user_metadata.full_name || userEmail.split('@')[0], 
-            isModerator: isOwner 
+            isModerator: isOwner,
+            isOwner: isOwner
         };
         console.log('Acta Members: Admin Status:', isOwner);
 
@@ -605,10 +682,10 @@ function updateGlobalUI() {
     const user = state.allUsers.find(u => u.email === state.user.email) || {};
 
     if (avatarWrapper) {
-        if (user.photo) {
-            avatarWrapper.innerHTML = `<img src="${user.photo}" style="width: 100%; height: 100%; object-fit: cover;">`;
+        if (safeImg(user.photo)) {
+            avatarWrapper.innerHTML = `<img src="${safeImg(user.photo)}" style="width: 100%; height: 100%; object-fit: cover;">`;
         } else {
-            avatarWrapper.innerHTML = `<div class="topbar-avatar-placeholder" style="background: var(--gold); color: black;">${state.user.name.charAt(0).toUpperCase()}</div>`;
+            avatarWrapper.innerHTML = `<div class="topbar-avatar-placeholder" style="background: var(--gold); color: black;">${sanitizeHTML(state.user.name.charAt(0).toUpperCase())}</div>`;
         }
     }
 
@@ -918,7 +995,7 @@ window.appToggleActivity = (id) => {
 };
 
 async function saveState() {
-    if (!state.user || !state.user.email) return;
+    if (!state.user || !state.user.email) return false;
     try {
         const u = state.allUsers.find(x => x.email === state.user.email);
         const completedIds = state.activities.filter(a => a.completed).map(a => a.id);
@@ -938,26 +1015,25 @@ async function saveState() {
         }
         localStorage.setItem(`progress_${state.user.email}`, JSON.stringify(localData));
 
+        let query;
         if (u) {
-            const { error } = await sb.from('users').update({ 
+            query = sb.from('users').update({ 
                 points: state.points, completed_activities: completedIds,
                 name: u.name, profession: u.profession, phone: u.phone, city: u.city, photo: u.photo, bio: u.bio
-            }).eq('email', state.user.email);
-            if (error) {
-                if (state.user.email === 'charlesnunes77@yahoo.com.br') {
-                    console.error('ERRO SUPABASE: Seu usuário Auth perdeu o vínculo com a tabela users.', error);
-                    window.appShowToast('Erro de Permissão (RLS). Veja o aviso que mandei no chat.', 'error');
-                }
-                throw error;
-            }
+            }).eq('email', state.user.email).select('email');
         } else {
-            const { error } = await sb.from('users').update({ 
+            query = sb.from('users').update({ 
                 points: state.points, completed_activities: completedIds
-            }).eq('email', state.user.email);
-            if (error) throw error;
+            }).eq('email', state.user.email).select('email');
         }
+        const { data, error } = await query;
+        if (error) throw error;
+        // RLS pode bloquear silenciosamente (0 linhas alteradas, sem erro)
+        if (!data || data.length === 0) throw new Error('Nenhum registro foi atualizado (permissão negada).');
+        return true;
     } catch (e) {
         console.error('Erro ao salvar no servidor (usando cache local):', e);
+        return false;
     }
 }
 
@@ -1030,13 +1106,13 @@ function renderRanking() {
                         ${rankingList.map((u, i) => {
                             const isMe = state.user && u.email === state.user.email;
                             const rowStyle = isMe ? 'background: rgba(212, 175, 55, 0.1); border-left: 4px solid var(--gold); border-bottom: 1px solid rgba(255,255,255,0.05);' : 'border-bottom: 1px solid rgba(255,255,255,0.05);';
-                            const nameHtml = isMe ? `<strong>Você</strong> (${u.name})` : u.name;
+                            const nameHtml = isMe ? `<strong>Você</strong> (${sanitizeHTML(u.name)})` : sanitizeHTML(u.name);
                             return `
                                 <tr style="${rowStyle}">
                                     <td style="padding: 15px 20px; font-weight: 700; color: ${i < 3 ? 'var(--white)' : 'var(--text-muted)'};">${i + 1}º</td>
                                     <td style="padding: 15px 20px;">
                                         <div style="font-size: 1.05rem; display: flex; align-items: center; gap: 8px;">
-                                            <span class="clickable-user" onclick="window.appShowUserProfile('${u.email}')">${nameHtml}</span>${getTrophy(i)}
+                                            <span class="clickable-user" onclick="window.appShowUserProfile('${jsArg(u.email)}')">${nameHtml}</span>${getTrophy(i)}
                                         </div>
                                         <div style="margin-top: 5px;">${getUserRankBadge(u.email)}</div>
                                     </td>
@@ -1074,7 +1150,7 @@ async function renderCommunity(selectedTheme = null, searchQuery = null) {
             <i data-lucide="search" class="search-icon"></i>
             <input type="text" id="community-search" class="search-input" placeholder="Pesquisar por temas ou palavras-chave..." 
                    onkeyup="if(event.key === 'Enter') window.appSearchCommunity(this.value)"
-                   value="${searchQuery || ''}">
+                   value="${sanitizeHTML(searchQuery || '')}">
         </div>
     `;
 
@@ -1091,10 +1167,11 @@ async function renderCommunity(selectedTheme = null, searchQuery = null) {
 
     let filteredTopics = state.communityTopics;
     if (searchQuery) {
+        const q = searchQuery.toLowerCase();
         filteredTopics = state.communityTopics.filter(t => 
-            t.title.toLowerCase().includes(searchQuery.toLowerCase()) || 
-            t.text.toLowerCase().includes(searchQuery.toLowerCase()) ||
-            t.theme.toLowerCase().includes(searchQuery.toLowerCase())
+            String(t.title || '').toLowerCase().includes(q) || 
+            String(t.text || '').toLowerCase().includes(q) ||
+            String(t.theme || '').toLowerCase().includes(q)
         );
     } else if (selectedTheme) {
         filteredTopics = state.communityTopics.filter(t => t.theme === selectedTheme);
@@ -1112,13 +1189,13 @@ async function renderCommunity(selectedTheme = null, searchQuery = null) {
                     </div>
                 ` : ''}
                 
-                ${searchQuery ? `<div style="margin-bottom: 20px; color: var(--gold); font-size: 1.1rem;">Resultados para: <strong>"${searchQuery}"</strong> (${filteredTopics.length})</div>` : ''}
+                ${searchQuery ? `<div style="margin-bottom: 20px; color: var(--gold); font-size: 1.1rem;">Resultados para: <strong>"${sanitizeHTML(searchQuery)}"</strong> (${filteredTopics.length})</div>` : ''}
 
                 <div class="topic-list scroll-container">
                     ${filteredTopics.map(t => `
                         <div class="topic-item" onclick="window.appShowTopic(${t.id})">
                             <div class="topic-header">
-                                <span style="display: flex; align-items: center; gap: 8px;">[${sanitizeHTML(t.theme)}] Por <strong><span class="clickable-user" onclick="event.stopPropagation(); window.appShowUserProfile('${sanitizeHTML(t.user_email)}')">${sanitizeHTML(t.user_name) || 'Desconhecido'}</span></strong> ${getUserRankBadge(t.user_email)}</span>
+                                <span style="display: flex; align-items: center; gap: 8px;">[${sanitizeHTML(t.theme)}] Por <strong><span class="clickable-user" onclick="event.stopPropagation(); window.appShowUserProfile('${jsArg(t.user_email)}')">${sanitizeHTML(t.user_name) || 'Desconhecido'}</span></strong> ${getUserRankBadge(t.user_email)}</span>
                                 <span>${new Date(t.created_at).toLocaleDateString('pt-BR')}</span>
                             </div>
                             <div class="topic-title">${sanitizeHTML(t.title)}</div>
@@ -1159,11 +1236,11 @@ window.appShowTopic = async (topicId) => {
     const view = document.getElementById('community-view');
     view.innerHTML = `
         <div class="view-header"><h2>Discussão</h2></div>
-        <button class="back-btn" onclick="renderCommunity('${sanitizeHTML(topic.theme)}')">← Voltar para ${sanitizeHTML(topic.theme)}</button>
+        <button class="back-btn" onclick="renderCommunity('${jsArg(topic.theme)}')">← Voltar para ${sanitizeHTML(topic.theme)}</button>
         
         <div class="card" style="border-left: 5px solid var(--gold); margin-bottom: 30px;">
             <div class="topic-header" style="display: flex; align-items: center; gap: 8px;">
-                <strong><span class="clickable-user" onclick="window.appShowUserProfile('${sanitizeHTML(topic.user_email)}')">${sanitizeHTML(topic.user_name)}</span></strong> ${getUserRankBadge(topic.user_email)} &bull; ${new Date(topic.created_at).toLocaleDateString('pt-BR')}
+                <strong><span class="clickable-user" onclick="window.appShowUserProfile('${jsArg(topic.user_email)}')">${sanitizeHTML(topic.user_name)}</span></strong> ${getUserRankBadge(topic.user_email)} &bull; ${new Date(topic.created_at).toLocaleDateString('pt-BR')}
             </div>
             <h1 style="color: var(--white); margin: 15px 0;">${sanitizeHTML(topic.title)}</h1>
             <p style="font-size: 1.1rem; line-height: 1.8;">${sanitizeHTML(topic.text)}</p>
@@ -1174,7 +1251,7 @@ window.appShowTopic = async (topicId) => {
             ${(replies && replies.length > 0) ? replies.map(r => `
                 <div class="reply-item">
                     <div class="topic-header" style="margin-bottom: 10px; display: flex; align-items: center; gap: 8px;">
-                        <strong><span class="clickable-user" onclick="window.appShowUserProfile('${sanitizeHTML(r.user_email)}')">${sanitizeHTML(r.user_name)}</span></strong> ${getUserRankBadge(r.user_email)} &bull; ${new Date(r.created_at).toLocaleDateString('pt-BR')}
+                        <strong><span class="clickable-user" onclick="window.appShowUserProfile('${jsArg(r.user_email)}')">${sanitizeHTML(r.user_name)}</span></strong> ${getUserRankBadge(r.user_email)} &bull; ${new Date(r.created_at).toLocaleDateString('pt-BR')}
                     </div>
                     <p>${sanitizeHTML(r.text)}</p>
                     ${(state.user.isModerator || r.user_email === state.user.email) ? `<button class="btn-delete-small" onclick="window.appDeleteReply(${topic.id}, ${r.id})">Excluir</button>` : ''}
@@ -1302,9 +1379,9 @@ async function renderMural() {
                 return `
                 <div class="card" style="border-top: 3px solid var(--gold); animation: fadeIn 0.5s ease-out;">
                     <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 5px;">
-                        <div style="width: 36px; height: 36px; border-radius: 50%; background: var(--gold); color: black; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 14px; cursor: pointer;" onclick="window.appShowUserProfile('${sanitizeHTML(p.user_email)}')">${p.user_name ? sanitizeHTML(p.user_name.charAt(0).toUpperCase()) : '?'}</div>
+                        <div style="width: 36px; height: 36px; border-radius: 50%; background: var(--gold); color: black; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 14px; cursor: pointer;" onclick="window.appShowUserProfile('${jsArg(p.user_email)}')">${p.user_name ? sanitizeHTML(p.user_name.charAt(0).toUpperCase()) : '?'}</div>
                         <div style="display: flex; flex-direction: column;">
-                            <strong><span class="clickable-user" onclick="window.appShowUserProfile('${sanitizeHTML(p.user_email)}')">${sanitizeHTML(p.user_name) || 'Desconhecido'}</span></strong>
+                            <strong><span class="clickable-user" onclick="window.appShowUserProfile('${jsArg(p.user_email)}')">${sanitizeHTML(p.user_name) || 'Desconhecido'}</span></strong>
                             ${getUserRankBadge(p.user_email)}
                         </div>
                     </div>
@@ -1422,7 +1499,7 @@ async function renderServicos(searchQuery = '') {
     const filteredPosts = state.servicosPosts.filter(p => {
         if (!searchQuery) return true;
         const q = searchQuery.toLowerCase();
-        return p.city.toLowerCase().includes(q) || p.need.toLowerCase().includes(q);
+        return String(p.city || '').toLowerCase().includes(q) || String(p.need || '').toLowerCase().includes(q);
     });
 
     view.innerHTML = `
@@ -1434,7 +1511,7 @@ async function renderServicos(searchQuery = '') {
         <div class="search-container" style="max-width: 600px; margin: 0 auto 30px auto;">
             <i data-lucide="search" class="search-icon"></i>
             <input type="text" id="servicos-search-input" class="search-input" placeholder="Buscar por cidade ou palavra-chave..." 
-                   value="${searchQuery}" onkeyup="if(event.key === 'Enter') window.appSearchServicos()">
+                   value="${sanitizeHTML(searchQuery)}" onkeyup="if(event.key === 'Enter') window.appSearchServicos()">
         </div>
         
         <div class="servico-form">
@@ -1451,15 +1528,16 @@ async function renderServicos(searchQuery = '') {
                 const isOwner = p.user_email === currentUserEmail;
                 const canManage = isOwner || isMod;
                 const postReplies = servicosReplies.filter(r => r.post_id === p.id);
-                const userPhoto = state.allUsers.find(u => u.email === p.user_email)?.photo;
+                const userPhoto = safeImg(state.allUsers.find(u => u.email === p.user_email)?.photo);
+                const emailArg = jsArg(p.user_email);
 
                 return `
                 <div class="card servico-card ${p.finalized ? 'status-finalized' : ''}">
                     <div class="servico-card-header">
                         <div class="user-info" style="display: flex; align-items: center; gap: 10px;">
-                            ${userPhoto ? `<img src="${userPhoto}" style="width: 32px; height: 32px; border-radius: 50%; object-fit: cover; cursor: pointer;" onclick="window.appShowUserProfile('${p.user_email}')">` : `<div style="width: 32px; height: 32px; border-radius: 50%; background: var(--gold); color: black; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 14px; cursor: pointer;" onclick="window.appShowUserProfile('${p.user_email}')">${p.user_name ? p.user_name.charAt(0).toUpperCase() : '?'}</div>`}
+                            ${userPhoto ? `<img src="${userPhoto}" style="width: 32px; height: 32px; border-radius: 50%; object-fit: cover; cursor: pointer;" onclick="window.appShowUserProfile('${emailArg}')">` : `<div style="width: 32px; height: 32px; border-radius: 50%; background: var(--gold); color: black; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 14px; cursor: pointer;" onclick="window.appShowUserProfile('${emailArg}')">${p.user_name ? sanitizeHTML(p.user_name.charAt(0).toUpperCase()) : '?'}</div>`}
                             <div>
-                                <div style="display: flex; align-items: center; gap: 8px;"><strong><span class="clickable-user" onclick="window.appShowUserProfile('${p.user_email}')">${p.user_name}</span></strong> ${getUserRankBadge(p.user_name)}</div>
+                                <div style="display: flex; align-items: center; gap: 8px;"><strong><span class="clickable-user" onclick="window.appShowUserProfile('${emailArg}')">${sanitizeHTML(p.user_name)}</span></strong> ${getUserRankBadge(p.user_email)}</div>
                                 <span class="servico-date" style="display: block;">${new Date(p.created_at).toLocaleDateString('pt-BR')}</span>
                             </div>
                         </div>
@@ -1470,9 +1548,9 @@ async function renderServicos(searchQuery = '') {
                     
                     <div class="servico-content">
                         <div class="servico-location">
-                            <i data-lucide="map-pin"></i> <span>${p.city}</span>
+                            <i data-lucide="map-pin"></i> <span>${sanitizeHTML(p.city)}</span>
                         </div>
-                        <div class="servico-need-text">${p.need}</div>
+                        <div class="servico-need-text">${sanitizeHTML(p.need)}</div>
                     </div>
 
                     <div class="servico-actions">
@@ -1495,10 +1573,10 @@ async function renderServicos(searchQuery = '') {
                             ${postReplies.length > 0 ? postReplies.map(r => `
                                 <div class="comment-item">
                                     <div class="comment-header" style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
-                                        <strong><span class="clickable-user" onclick="window.appShowUserProfile('${r.user_email}')">${r.user_name}</span></strong> ${getUserRankBadge(r.user_name)} • ${new Date(r.created_at).toLocaleDateString('pt-BR')}
+                                        <strong><span class="clickable-user" onclick="window.appShowUserProfile('${jsArg(r.user_email)}')">${sanitizeHTML(r.user_name)}</span></strong> ${getUserRankBadge(r.user_email)} • ${new Date(r.created_at).toLocaleDateString('pt-BR')}
                                         ${(r.user_email === currentUserEmail || isMod) ? `<button class="btn-delete-x" onclick="window.appAskDeleteServicoComment(${p.id}, ${r.id})">&times;</button>` : ''}
                                     </div>
-                                    <p>${r.text}</p>
+                                    <p>${sanitizeHTML(r.text)}</p>
                                 </div>
                             `).join('') : '<div class="empty-state" style="padding: 20px;"><i data-lucide="message-square"></i><p>Nenhum contato ainda.</p></div>'}
                         </div>
@@ -1633,11 +1711,7 @@ window.appDeleteServicoComment = (postId, commentId) => {
 };
 
 // --- AUXILIARES ---
-function refreshIcons() {
-    if (window.lucide) {
-        try { lucide.createIcons(); } catch (e) {}
-    }
-}
+// (refreshIcons com debounce está definido no topo do arquivo)
 
 function updateLevel() {
     const oldLevel = state.level;
@@ -1758,33 +1832,35 @@ function renderUsers() {
                             const verColor = u.verified===true ? '#34C759' : (u.verified===false ? '#FF3B30' : 'rgba(255,255,255,0.3)');
                             const verIcon = u.verified===true ? '✓' : (u.verified===false ? '✗' : '–');
                             const verTitle = u.verified===true ? 'Verificado – clique para marcar como não verificado' : (u.verified===false ? 'Não verificado – clique para voltar ao neutro' : 'Sem status – clique para verificar');
+                            const emailArg = jsArg(u.email);
+                            const photo = safeImg(u.photo);
                             return `
                             <tr class="${u.is_blocked ? 'row-blocked' : ''}">
                                 <td style="color:var(--text-muted); font-weight:700;">${u._entry_order + 1}</td>
                                 <td>
                                     <div style="display: flex; align-items: center; gap: 10px;">
-                                        ${u.photo ? `<img src="${u.photo}" style="width: 36px; height: 36px; border-radius: 50%; object-fit: cover;">` : `<div style="width: 36px; height: 36px; border-radius: 50%; background: var(--gold); color: black; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 14px; flex-shrink:0;">${u.name ? u.name.charAt(0).toUpperCase() : '?'}</div>`}
+                                        ${photo ? `<img src="${photo}" style="width: 36px; height: 36px; border-radius: 50%; object-fit: cover;">` : `<div style="width: 36px; height: 36px; border-radius: 50%; background: var(--gold); color: black; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 14px; flex-shrink:0;">${u.name ? sanitizeHTML(u.name.charAt(0).toUpperCase()) : '?'}</div>`}
                                         <div>
-                                            <strong style="cursor:pointer; text-decoration:underline dotted; color:var(--gold);" onclick="window.appShowUserHistory('${u.email}')" title="Ver histórico de ${u.name}">${u.name || '-'}</strong> ${u.email === state.user.email ? '<span class="badge-me">Você</span>' : ''}
+                                            <strong style="cursor:pointer; text-decoration:underline dotted; color:var(--gold);" onclick="window.appShowUserHistory('${emailArg}')" title="Ver histórico de ${sanitizeHTML(u.name)}">${sanitizeHTML(u.name) || '-'}</strong> ${u.email === state.user.email ? '<span class="badge-me">Você</span>' : ''}
                                             <div style="margin-top: 4px;">${getUserRankBadge(u.email)}</div>
-                                            <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 4px;">${u.email}</div>
+                                            <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 4px;">${sanitizeHTML(u.email)}</div>
                                         </div>
                                     </div>
                                 </td>
                                 <td>
-                                    <span class="badge-role ${u.role === 'Administrador' ? 'role-admin' : 'role-aluno'}">${u.role || 'Aluno'}</span>
-                                    <button class="btn-edit-small" onclick="window.appToggleUserRole('${u.email}')"><i data-lucide="refresh-cw"></i></button>
+                                    <span class="badge-role ${u.role === 'Administrador' ? 'role-admin' : 'role-aluno'}">${sanitizeHTML(u.role || 'Aluno')}</span>
+                                    <button class="btn-edit-small" onclick="window.appToggleUserRole('${emailArg}')"><i data-lucide="refresh-cw"></i></button>
                                 </td>
                                 <td>
-                                    <span class="prof-label">${u.profession || '-'}</span>
-                                    <button class="btn-edit-small" onclick="window.appChangeProfession('${u.email}')"><i data-lucide="edit-3"></i></button>
+                                    <span class="prof-label">${sanitizeHTML(u.profession) || '-'}</span>
+                                    <button class="btn-edit-small" onclick="window.appChangeProfession('${emailArg}')"><i data-lucide="edit-3"></i></button>
                                 </td>
-                                <td>${u.phone || '-'}</td>
+                                <td>${sanitizeHTML(u.phone) || '-'}</td>
                                 <td>
-                                    <div>${u.city || '-'}</div>
-                                    <div style="font-size: 0.8rem; color: var(--text-muted);">${u.address || '-'}</div>
+                                    <div>${sanitizeHTML(u.city) || '-'}</div>
+                                    <div style="font-size: 0.8rem; color: var(--text-muted);">${sanitizeHTML(u.address) || '-'}</div>
                                 </td>
-                                <td>${u.joined_date || '-'}</td>
+                                <td>${sanitizeHTML(u.joined_date) || '-'}</td>
                                 <td>
                                     <span class="status-indicator ${u.is_blocked ? 'status-blocked' : 'status-active'}">
                                         ${u.is_blocked ? 'Bloqueado' : 'Ativo'}
@@ -1792,7 +1868,7 @@ function renderUsers() {
                                 </td>
                                 <td style="text-align:center;">
                                     <button
-                                        onclick="window.appToggleVerified('${u.email}')"
+                                        onclick="window.appToggleVerified('${emailArg}')"
                                         title="${verTitle}"
                                         style="
                                             width: 36px; height: 36px; border-radius: 50%; border: 2px solid ${verBorder};
@@ -1807,7 +1883,7 @@ function renderUsers() {
                                 </td>
                                 <td style="white-space:nowrap;">
                                     <button class="btn-action ${u.is_blocked ? 'btn-unblock' : 'btn-block-user'}" 
-                                            onclick="window.appToggleUserBlock('${u.email}')"
+                                            onclick="window.appToggleUserBlock('${emailArg}')"
                                             ${u.email === state.user.email ? 'disabled style="opacity: 0.3; cursor: not-allowed;"' : ''}>
                                         ${u.is_blocked ? 'Desbloquear' : 'Bloquear'}
                                     </button>
@@ -1842,9 +1918,9 @@ function renderUsers() {
                             return `
                             <tr>
                                 <td style="color:var(--text-muted);">${dateStr}</td>
-                                <td style="font-weight:700; color:var(--white);">${r.user_name}</td>
-                                <td>${r.user_email}</td>
-                                <td><span class="status-indicator status-${r.status === 'pending' ? 'blocked' : 'active'}">${r.status}</span></td>
+                                <td style="font-weight:700; color:var(--white);">${sanitizeHTML(r.user_name)}</td>
+                                <td>${sanitizeHTML(r.user_email)}</td>
+                                <td><span class="status-indicator status-${r.status === 'pending' ? 'blocked' : 'active'}">${sanitizeHTML(r.status)}</span></td>
                             </tr>
                             `;
                         }).join('')}
@@ -1922,37 +1998,37 @@ function renderPerfil() {
         <div class="card" style="max-width: 600px; margin: 0 auto;">
             <div style="text-align: center; margin-bottom: 25px;">
                 <div style="width: 100px; height: 100px; border-radius: 50%; background: #1A1A1A; margin: 0 auto 15px auto; overflow: hidden; border: 2px solid var(--gold); display: flex; align-items: center; justify-content: center;">
-                    ${user.photo ? `<img src="${user.photo}" id="perfil-photo-preview" style="width: 100%; height: 100%; object-fit: cover;">` : `<i data-lucide="user" id="perfil-photo-icon" style="width: 40px; height: 40px; color: var(--gold);"></i><img src="" id="perfil-photo-preview" style="width: 100%; height: 100%; object-fit: cover; display: none;">`}
+                    ${safeImg(user.photo) ? `<img src="${safeImg(user.photo)}" id="perfil-photo-preview" style="width: 100%; height: 100%; object-fit: cover;">` : `<i data-lucide="user" id="perfil-photo-icon" style="width: 40px; height: 40px; color: var(--gold);"></i><img src="" id="perfil-photo-preview" style="width: 100%; height: 100%; object-fit: cover; display: none;">`}
                 </div>
                 <label for="perfil-photo-upload" class="btn btn-secondary" style="padding: 8px 15px; font-size: 0.9rem; cursor: pointer; border: 1px solid var(--gold); color: var(--gold); border-radius: 6px;">Alterar Foto</label>
                 <input type="file" id="perfil-photo-upload" accept="image/*" style="display: none;" onchange="window.appPreviewPhoto(event)">
-                <input type="hidden" id="perfil-photo-base64" value="${user.photo || ''}">
+                <input type="hidden" id="perfil-photo-base64" value="${safeImg(user.photo)}">
             </div>
             
             <div class="form-grid" style="grid-template-columns: 1fr; gap: 20px;">
                 <div>
                     <label style="color: var(--gold); display: block; margin-bottom: 5px;">Nome Completo</label>
-                    <input type="text" id="perfil-name" class="input-styled" value="${user.name || state.user.name}" readonly style="opacity: 0.7;">
+                    <input type="text" id="perfil-name" class="input-styled" value="${sanitizeHTML(user.name || state.user.name)}" readonly style="opacity: 0.7;">
                 </div>
                 <div>
                     <label style="color: var(--gold); display: block; margin-bottom: 5px;">E-mail</label>
-                    <input type="text" id="perfil-email" class="input-styled" value="${state.user.email}" readonly style="opacity: 0.7;">
+                    <input type="text" id="perfil-email" class="input-styled" value="${sanitizeHTML(state.user.email)}" readonly style="opacity: 0.7;">
                 </div>
                 <div>
                     <label style="color: var(--gold); display: block; margin-bottom: 5px;">Profissão / Cargo Atual</label>
-                    <input type="text" id="perfil-prof" class="input-styled" value="${user.profession || ''}" placeholder="Ex: Advogado, Corretor...">
+                    <input type="text" id="perfil-prof" class="input-styled" value="${sanitizeHTML(user.profession || '')}" placeholder="Ex: Advogado, Corretor...">
                 </div>
                 <div>
                     <label style="color: var(--gold); display: block; margin-bottom: 5px;">Telefone / WhatsApp</label>
-                    <input type="text" id="perfil-phone" class="input-styled" value="${user.phone || ''}" placeholder="(XX) XXXXX-XXXX">
+                    <input type="text" id="perfil-phone" class="input-styled" value="${sanitizeHTML(user.phone || '')}" placeholder="(XX) XXXXX-XXXX">
                 </div>
                 <div>
                     <label style="color: var(--gold); display: block; margin-bottom: 5px;">Cidade / Estado</label>
-                    <input type="text" id="perfil-city" class="input-styled" value="${user.city || ''}" placeholder="São Paulo - SP">
+                    <input type="text" id="perfil-city" class="input-styled" value="${sanitizeHTML(user.city || '')}" placeholder="São Paulo - SP">
                 </div>
                 <div>
                     <label style="color: var(--gold); display: block; margin-bottom: 5px;">Sobre Mim (Breve resumo)</label>
-                    <textarea id="perfil-bio" class="textarea-styled" placeholder="Conte um pouco sobre sua trajetória profissional e como pode ajudar outros membros..." style="min-height: 100px;">${user.bio || ''}</textarea>
+                    <textarea id="perfil-bio" class="textarea-styled" placeholder="Conte um pouco sobre sua trajetória profissional e como pode ajudar outros membros..." style="min-height: 100px;">${sanitizeHTML(user.bio || '')}</textarea>
                 </div>
                 
                 <button class="btn btn-primary" style="margin-top: 10px;" onclick="window.appSavePerfil(this)">
@@ -2005,25 +2081,34 @@ window.appPreviewPhoto = (event) => {
 window.appSavePerfil = async (btn) => {
     window.appSetButtonLoading(btn, true);
 
-    const prof = document.getElementById('perfil-prof').value;
-    const phone = document.getElementById('perfil-phone').value;
-    const city = document.getElementById('perfil-city').value;
+    const prof = document.getElementById('perfil-prof').value.trim();
+    const phone = document.getElementById('perfil-phone').value.trim();
+    const city = document.getElementById('perfil-city').value.trim();
     const photo = document.getElementById('perfil-photo-base64').value;
+    const bio = document.getElementById('perfil-bio').value.trim();
 
-    // Atualizar no state global local primeiro para feedback rápido
     const userIndex = state.allUsers.findIndex(u => u.email === state.user.email);
-    if (userIndex !== -1) {
-        state.allUsers[userIndex].profession = prof;
-        state.allUsers[userIndex].phone = phone;
-        state.allUsers[userIndex].city = city;
-        state.allUsers[userIndex].photo = photo;
-        state.allUsers[userIndex].bio = document.getElementById('perfil-bio').value;
+    if (userIndex === -1) {
+        window.appSetButtonLoading(btn, false);
+        window.appShowToast('Seu perfil ainda está carregando. Aguarde alguns segundos e tente de novo.', 'error');
+        return;
     }
 
-    await saveState();
-    updateGlobalUI(); 
-    window.appShowToast('Perfil atualizado com sucesso!', 'success');
+    // Guarda os valores antigos para desfazer se falhar
+    const target = state.allUsers[userIndex];
+    const backup = { profession: target.profession, phone: target.phone, city: target.city, photo: target.photo, bio: target.bio };
+    Object.assign(target, { profession: prof, phone, city, photo, bio });
+
+    const ok = await saveState();
     window.appSetButtonLoading(btn, false);
+
+    if (ok) {
+        updateGlobalUI();
+        window.appShowToast('Perfil atualizado com sucesso!', 'success');
+    } else {
+        Object.assign(target, backup);
+        window.appShowToast('Não foi possível salvar seu perfil. Verifique sua conexão e tente novamente.', 'error');
+    }
 };
 
 window.appChangeProfession = (email) => {
@@ -2031,8 +2116,8 @@ window.appChangeProfession = (email) => {
     if (!user) return;
     
     const body = `
-        <p>Altere a profissão de <strong>${user.name}</strong>:</p>
-        <input type="text" id="new-profession-input" class="modal-input" value="${user.profession}">
+        <p>Altere a profissão de <strong>${sanitizeHTML(user.name)}</strong>:</p>
+        <input type="text" id="new-profession-input" class="modal-input" value="${sanitizeHTML(user.profession || '')}">
     `;
     
     appShowModal('Editar Profissão', body, async () => {
@@ -2056,7 +2141,7 @@ window.appToggleUserRole = (email) => {
     
     const currentRole = user.role || 'Aluno';
     const newRole = currentRole === 'Administrador' ? 'Aluno' : 'Administrador';
-    const body = `<p>Deseja mudar o cargo de <strong>${user.name}</strong> de <strong>${currentRole}</strong> para <strong>${newRole}</strong>?</p>`;
+    const body = `<p>Deseja mudar o cargo de <strong>${sanitizeHTML(user.name)}</strong> de <strong>${sanitizeHTML(currentRole)}</strong> para <strong>${newRole}</strong>?</p>`;
     
     appShowModal('Alterar Cargo', body, async () => {
         appCloseModal();
@@ -2083,7 +2168,7 @@ window.appToggleUserBlock = (email) => {
     if (!user || user.email === state.user.email) return;
     
     const action = user.is_blocked ? 'desbloquear' : 'bloquear';
-    const body = `<p>Tem certeza que deseja <strong>${action}</strong> o acesso de <strong>${user.name}</strong>?</p>`;
+    const body = `<p>Tem certeza que deseja <strong>${action}</strong> o acesso de <strong>${sanitizeHTML(user.name)}</strong>?</p>`;
     
     appShowModal('Confirmar Ação', body, async () => {
         appCloseModal();
@@ -2167,8 +2252,8 @@ window.appShowUserHistory = async (email) => {
         } else {
             topics.forEach(t => {
                 body += `<div style="${itemStyle}">
-                    <span style="${badgeStyle('rgba(212,175,55,0.5)')}">${t.theme}</span>
-                    <strong>${truncate(t.title, 60)}</strong>
+                    <span style="${badgeStyle('rgba(212,175,55,0.5)')}">${sanitizeHTML(t.theme)}</span>
+                    <strong>${sanitizeHTML(truncate(t.title, 60))}</strong>
                     <span style="color:var(--text-muted); float:right; font-size:0.8rem;">${fmt(t.created_at)}</span>
                 </div>`;
             });
@@ -2182,8 +2267,8 @@ window.appShowUserHistory = async (email) => {
         } else {
             replies.forEach(r => {
                 body += `<div style="${itemStyle}">
-                    <span style="color:var(--text-muted); font-size:0.78rem; display:block; margin-bottom:2px;">em tópico #${r.topic_id} • ${fmt(r.created_at)}</span>
-                    ${truncate(r.text, 90)}
+                    <span style="color:var(--text-muted); font-size:0.78rem; display:block; margin-bottom:2px;">em tópico #${sanitizeHTML(r.topic_id)} • ${fmt(r.created_at)}</span>
+                    ${sanitizeHTML(truncate(r.text, 90))}
                 </div>`;
             });
         }
@@ -2196,8 +2281,8 @@ window.appShowUserHistory = async (email) => {
         } else {
             muralPosts.forEach(p => {
                 body += `<div style="${itemStyle}">
-                    <span style="${badgeStyle('rgba(90,120,255,0.5)')}">${p.category}</span>
-                    ${truncate(p.text, 80)}
+                    <span style="${badgeStyle('rgba(90,120,255,0.5)')}">${sanitizeHTML(p.category)}</span>
+                    ${sanitizeHTML(truncate(p.text, 80))}
                     <span style="color:var(--text-muted); float:right; font-size:0.8rem;">❤️ ${p.likes||0} • ${fmt(p.created_at)}</span>
                 </div>`;
             });
@@ -2211,7 +2296,7 @@ window.appShowUserHistory = async (email) => {
         }
     } catch(err) {
         const modalBody = document.getElementById('modal-body');
-        if (modalBody) modalBody.innerHTML = `<p style="color:#FF3B30;">Erro ao carregar histórico: ${err.message}</p>`;
+        if (modalBody) modalBody.innerHTML = `<p style="color:#FF3B30;">Erro ao carregar histórico: ${sanitizeHTML(err.message)}</p>`;
     }
 };
 
@@ -2224,7 +2309,7 @@ window.appShowUserProfile = async (emailOrName) => {
     if (!user) {
         appShowModal("Carregando...", `<div style="text-align:center; padding: 20px; color: var(--gold);"><i data-lucide="loader" class="spin"></i> Buscando perfil...</div>`, null);
         refreshIcons();
-        const { data, error } = await sb.from('users').select('*').or(`email.eq.${emailOrName},name.eq.${emailOrName}`).maybeSingle();
+        const { data, error } = await sb.from('users').select('*').eq('email', emailOrName).maybeSingle();
         if (data) {
             user = data;
             // Opcional: adicionar ao state para cache
@@ -2236,9 +2321,9 @@ window.appShowUserProfile = async (emailOrName) => {
     }
 
     const rankBadge = getUserRankBadge(user.email);
-    const photoHtml = user.photo 
-        ? `<img src="${user.photo}" style="width: 120px; height: 120px; border-radius: 50%; object-fit: cover; border: 3px solid var(--gold); margin-bottom: 15px;">`
-        : `<div style="width: 120px; height: 120px; border-radius: 50%; background: var(--gold); color: black; display: flex; align-items: center; justify-content: center; font-size: 48px; font-weight: bold; border: 3px solid var(--gold); margin-bottom: 15px;">${sanitizeHTML(user.name.charAt(0).toUpperCase())}</div>`;
+    const photoHtml = safeImg(user.photo) 
+        ? `<img src="${safeImg(user.photo)}" style="width: 120px; height: 120px; border-radius: 50%; object-fit: cover; border: 3px solid var(--gold); margin-bottom: 15px;">`
+        : `<div style="width: 120px; height: 120px; border-radius: 50%; background: var(--gold); color: black; display: flex; align-items: center; justify-content: center; font-size: 48px; font-weight: bold; border: 3px solid var(--gold); margin-bottom: 15px;">${sanitizeHTML(String(user.name || '?').charAt(0).toUpperCase())}</div>`;
 
     const body = `
         <div style="text-align: center; padding: 10px 0;">
@@ -2269,14 +2354,14 @@ window.appShowUserProfile = async (emailOrName) => {
             </div>
             
             ${state.user.isModerator ? `
-                <button class="btn btn-secondary" style="margin-top: 25px; width: 100%; border-color: rgba(212,175,55,0.3);" onclick="window.appShowUserHistory('${sanitizeHTML(user.email)}')">
+                <button class="btn btn-secondary" style="margin-top: 25px; width: 100%; border-color: rgba(212,175,55,0.3);" onclick="window.appShowUserHistory('${jsArg(user.email)}')">
                     <i data-lucide="history" style="width: 16px; height: 16px;"></i> Ver Histórico Acadêmico
                 </button>
             ` : ''}
         </div>
     `;
 
-    appShowModal(`Perfil de ${sanitizeHTML(user.name)}`, body, null);
+    appShowModal(`Perfil de ${user.name || ''}`, body, null);
     
     // Esconde o botão de confirmar pois é apenas visualização
     const confirmBtn = document.getElementById('modal-confirm-btn');

@@ -7,7 +7,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="styles.css?v=2.2">
     <!-- Lucide Icons -->
     <script src="https://unpkg.com/lucide@latest"></script>
     <!-- Supabase JS -->
@@ -18,13 +18,54 @@
 <body>
     <!-- Auth logic: inline so it works regardless of app.js loading -->
     <script>
+        // --- Detecta link de recuperação de senha ANTES do Supabase limpar a URL ---
+        (function() {
+            var h = window.location.hash || '';
+            var q = window.location.search || '';
+            window.__authRecovery = /type=recovery/.test(h) || /[?&]reset=1/.test(q);
+            var m = (h + '&' + q).match(/error_description=([^&]+)/);
+            window.__authLinkError = m ? decodeURIComponent(m[1].replace(/\+/g, ' ')) : null;
+        })();
+
         // Screen switcher
         window.appSwitchAuthTab = function(tab) {
-            ['login', 'signup', 'forgot'].forEach(function(t) {
+            ['login', 'signup', 'forgot', 'reset'].forEach(function(t) {
                 var el = document.getElementById('auth-' + t);
                 if (el) el.style.display = (t === tab) ? 'block' : 'none';
             });
         };
+
+        // Tecla Enter envia o formulário da tela de autenticação visível
+        document.addEventListener('keydown', function(e) {
+            if (e.key !== 'Enter' || !e.target || e.target.tagName !== 'INPUT') return;
+            var screen = e.target.closest && e.target.closest('.auth-screen');
+            if (!screen) return;
+            e.preventDefault();
+            if (screen.id === 'auth-login') window.doLogin();
+            else if (screen.id === 'auth-signup') window.doSignup();
+            else if (screen.id === 'auth-forgot') window.doForgot();
+            else if (screen.id === 'auth-reset') window.doResetPassword();
+        });
+
+        function translateAuthError(msg) {
+            msg = String(msg || '');
+            if (/already registered|already been registered/i.test(msg)) return 'Este e-mail já está cadastrado. Faça login ou use "Esqueci minha senha".';
+            if (/rate limit|too many/i.test(msg)) return 'Muitas tentativas em pouco tempo. Aguarde alguns minutos e tente novamente.';
+            if (/at least 6|password should be/i.test(msg)) return 'A senha deve ter no mínimo 6 caracteres.';
+            if (/invalid email|unable to validate email/i.test(msg)) return 'E-mail inválido.';
+            if (/same.*password|different from the old/i.test(msg)) return 'A nova senha deve ser diferente da anterior.';
+            if (/expired|invalid.*(token|link)/i.test(msg)) return 'Link expirado ou inválido. Peça um novo em "Esqueci minha senha".';
+            if (/failed to fetch|network/i.test(msg)) return 'Sem conexão com o servidor. Verifique sua internet e tente novamente.';
+            return msg;
+        }
+
+        function setBtn(id, busy, label) {
+            var b = document.getElementById(id);
+            if (!b) return;
+            b.disabled = busy;
+            b.style.opacity = busy ? '0.7' : '1';
+            b.textContent = busy ? 'Processando...' : label;
+        }
 
         function getSupabase() {
             if (!window.supabaseClient) {
@@ -100,7 +141,7 @@
                     } else if (msg === 'Email not confirmed') {
                         showAuthMsg('login-error', 'Confirme seu e-mail antes de entrar.', true);
                     } else {
-                        showAuthMsg('login-error', 'Erro do servidor: ' + msg, true);
+                        showAuthMsg('login-error', translateAuthError(msg), true);
                     }
                 } else {
                     showAuthMsg('login-error', '✓ Login realizado! Entrando...', false);
@@ -111,7 +152,7 @@
                 if (e.message === '__TIMEOUT__') {
                     showAuthMsg('login-error', 'Erro: O servidor está demorando muito. Tente novamente em instantes.', true);
                 } else {
-                    showAuthMsg('login-error', 'Erro: ' + e.message, true);
+                    showAuthMsg('login-error', 'Erro: ' + translateAuthError(e.message), true);
                 }
             }
         };
@@ -126,17 +167,36 @@
             var sb = getSupabase();
             if (!sb) { showAuthMsg('signup-error', 'Serviço não carregou. Recarregue a página.', true); return; }
             showAuthMsg('signup-error', 'Criando conta...', false);
+            setBtn('signup-btn', true, 'Criar Conta');
             try {
-                var result = await sb.auth.signUp({ email: email, password: password, options: { data: { full_name: name } } });
-                console.log('Signup result:', result);
+                var result = await sb.auth.signUp({
+                    email: email,
+                    password: password,
+                    options: { data: { full_name: name }, emailRedirectTo: window.location.origin + '/' }
+                });
+                setBtn('signup-btn', false, 'Criar Conta');
                 if (result.error) {
-                    showAuthMsg('signup-error', result.error.message, true);
+                    showAuthMsg('signup-error', translateAuthError(result.error.message), true);
+                    return;
+                }
+                var user = result.data && result.data.user;
+                var session = result.data && result.data.session;
+                // Supabase devolve usuário sem "identities" quando o e-mail já existe
+                if (user && Array.isArray(user.identities) && user.identities.length === 0) {
+                    showAuthMsg('signup-error', translateAuthError('already registered'), true);
+                    return;
+                }
+                if (session) {
+                    showAuthMsg('signup-error', '✓ Conta criada! Entrando...', false);
+                    setTimeout(function() { window.location.reload(); }, 1000);
                 } else {
-                    showAuthMsg('signup-error', '✓ Conta criada! Bem-vindo(a)!', false);
-                    setTimeout(function() { window.location.reload(); }, 2000);
+                    // Confirmação de e-mail obrigatória
+                    showAuthMsg('signup-error', '✓ Conta criada! Enviamos um link de confirmação para ' + email + '. Confirme pelo e-mail (veja também o spam) e depois faça login.', false);
+                    document.getElementById('login-email').value = email;
                 }
             } catch(e) {
-                showAuthMsg('signup-error', 'Erro: ' + e.message, true);
+                setBtn('signup-btn', false, 'Criar Conta');
+                showAuthMsg('signup-error', 'Erro: ' + translateAuthError(e.message), true);
             }
         };
 
@@ -146,17 +206,55 @@
             if (!email) { showAuthMsg('forgot-error', 'Digite seu e-mail.', true); return; }
             var sb = getSupabase();
             if (!sb) { showAuthMsg('forgot-error', 'Serviço não carregou. Recarregue a página.', true); return; }
+            showAuthMsg('forgot-success', '', false);
             showAuthMsg('forgot-error', 'Enviando...', false);
+            setBtn('forgot-btn', true, 'Enviar Link de Recuperação');
             try {
-                var result = await sb.auth.resetPasswordForEmail(email);
+                var result = await sb.auth.resetPasswordForEmail(email, {
+                    redirectTo: window.location.origin + '/?reset=1'
+                });
+                setBtn('forgot-btn', false, 'Enviar Link de Recuperação');
                 if (result.error) {
-                    showAuthMsg('forgot-error', result.error.message, true);
+                    showAuthMsg('forgot-error', translateAuthError(result.error.message), true);
                 } else {
-                    showAuthMsg('forgot-success', '✓ Link enviado para o seu e-mail!', false);
                     showAuthMsg('forgot-error', '', false);
+                    showAuthMsg('forgot-success', '✓ Se este e-mail estiver cadastrado, você receberá um link para criar uma nova senha. Veja também a caixa de spam.', false);
                 }
             } catch(e) {
-                showAuthMsg('forgot-error', 'Erro: ' + e.message, true);
+                setBtn('forgot-btn', false, 'Enviar Link de Recuperação');
+                showAuthMsg('forgot-error', 'Erro: ' + translateAuthError(e.message), true);
+            }
+        };
+
+        // NOVA SENHA (após clicar no link do e-mail)
+        window.doResetPassword = async function() {
+            var p1 = document.getElementById('reset-password').value;
+            var p2 = document.getElementById('reset-password-confirm').value;
+            if (!p1 || !p2) { showAuthMsg('reset-error', 'Preencha os dois campos.', true); return; }
+            if (p1.length < 6) { showAuthMsg('reset-error', 'A senha deve ter no mínimo 6 caracteres.', true); return; }
+            if (p1 !== p2) { showAuthMsg('reset-error', 'As senhas não conferem.', true); return; }
+            var sb = getSupabase();
+            if (!sb) { showAuthMsg('reset-error', 'Serviço não carregou. Recarregue a página.', true); return; }
+            setBtn('reset-btn', true, 'Salvar Nova Senha');
+            try {
+                var sess = await sb.auth.getSession();
+                if (!sess.data || !sess.data.session) {
+                    setBtn('reset-btn', false, 'Salvar Nova Senha');
+                    showAuthMsg('reset-error', translateAuthError('expired link'), true);
+                    return;
+                }
+                var result = await sb.auth.updateUser({ password: p1 });
+                setBtn('reset-btn', false, 'Salvar Nova Senha');
+                if (result.error) {
+                    showAuthMsg('reset-error', translateAuthError(result.error.message), true);
+                } else {
+                    showAuthMsg('reset-error', '✓ Senha alterada com sucesso! Entrando...', false);
+                    window.__authRecovery = false;
+                    setTimeout(function() { window.location.replace(window.location.origin + '/'); }, 1200);
+                }
+            } catch(e) {
+                setBtn('reset-btn', false, 'Salvar Nova Senha');
+                showAuthMsg('reset-error', 'Erro: ' + translateAuthError(e.message), true);
             }
         };
     </script>
@@ -183,7 +281,7 @@
                                 <input type="password" id="login-password" placeholder="••••••••" autocomplete="current-password">
                             </div>
                             <button type="button" id="login-btn" class="btn btn-primary btn-block" onclick="doLogin()">Entrar</button>
-                            <div style="text-align:center; color:gray; font-size:10px; margin-top:10px;">Versão 2.1</div>
+                            <div style="text-align:center; color:gray; font-size:10px; margin-top:10px;">Versão 2.2</div>
                             <p id="login-error" class="auth-error"></p>
 
                         <div class="auth-links">
@@ -232,6 +330,25 @@
                         </div>
                     </div>
 
+                    <!-- TELA: NOVA SENHA (aberta pelo link do e-mail) -->
+                    <div id="auth-reset" class="auth-screen" style="display:none;">
+                        <h2>Criar Nova Senha</h2>
+                        <p style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 25px;">Digite sua nova senha duas vezes para confirmar.</p>
+                        <div class="form-group">
+                            <label for="reset-password">Nova senha</label>
+                            <input type="password" id="reset-password" placeholder="Mínimo 6 caracteres" autocomplete="new-password">
+                        </div>
+                        <div class="form-group">
+                            <label for="reset-password-confirm">Confirmar nova senha</label>
+                            <input type="password" id="reset-password-confirm" placeholder="Repita a senha" autocomplete="new-password">
+                        </div>
+                        <button type="button" id="reset-btn" class="btn btn-primary btn-block" onclick="doResetPassword()">Salvar Nova Senha</button>
+                        <p id="reset-error" class="auth-error"></p>
+                        <div class="auth-links">
+                            <button type="button" class="auth-link-btn" onclick="window.appSwitchAuthTab('forgot')">Pedir um novo link</button>
+                        </div>
+                    </div>
+
 
                 </div>
 
@@ -271,7 +388,7 @@
                 <div class="sidebar-footer" style="padding: 20px; border-top: 1px solid rgba(255, 255, 255, 0.05); text-align: center; opacity: 0.3; pointer-events: none;">
                     <i data-lucide="shield-check" style="width: 20px; height: 20px; color: var(--gold); margin-bottom: 5px; display: inline-block;"></i>
                     <div style="font-size: 0.70rem; font-weight: 500; font-family: 'Outfit', sans-serif; letter-spacing: 0.5px;">PLATAFORMA PREMIUM</div>
-                    <div style="font-size: 0.65rem; margin-top: 2px;">Versão 2.1</div>
+                    <div style="font-size: 0.65rem; margin-top: 2px;">Versão 2.2</div>
                 </div>
             </nav>
 
@@ -395,6 +512,6 @@
     <!-- Toast Container -->
     <div id="toast-container"></div>
 
-    <script src="app.js?v=2.1"></script>
+    <script src="app.js?v=2.2"></script>
 </body>
 </html>
