@@ -335,3 +335,21 @@
 .ac-tour-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .ac-tour-again { display: inline-flex; align-items: center; gap: 4px; margin-left: 6px; vertical-align: middle; }
 .ac-tour-again svg { width: 14px; height: 14px; }
+
+/* --- Serviços sempre editáveis: tabela vira "cartões" no celular (v5) --- */
+.ac-table-wrap { position: relative; } /* segura textos de acessibilidade/tooltips dentro da caixa */
+@media (max-width: 600px) {
+  .ac-table:not(.view) { min-width: 0; display: block; }
+  .ac-table:not(.view) thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); }
+  .ac-table:not(.view) tbody { display: block; }
+  .ac-table:not(.view) tr { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)) 36px; gap: 8px; padding: 12px 10px; border-bottom: 1px solid var(--ac-line); align-items: end; }
+  .ac-table:not(.view) tr.ac-cat { display: block; padding: 0; }
+  .ac-table:not(.view) td { display: block; padding: 0; border: 0; min-width: 0 !important; width: auto !important; text-align: left; }
+  .ac-table:not(.view) tr.ac-cat td { padding: 10px 12px; }
+  .ac-table:not(.view) td.ac-sv-name { grid-column: 1 / -1; }
+  .ac-table:not(.view) td.money { grid-column: 1 / 4; }
+  .ac-table:not(.view) td[data-label]::before { content: attr(data-label); display: block; font-size: .66rem; text-transform: uppercase; letter-spacing: .5px; color: var(--text-muted, #888); margin-bottom: 4px; font-weight: 700; }
+  .ac-table:not(.view) .ac-affix, .ac-table:not(.view) .ac-affix .ac-input.num { width: 100%; margin: 0; }
+  .ac-table:not(.view) .ac-sv-meta { flex-wrap: wrap; }
+  .ac-table:not(.view) .ac-sv-meta .ac-input { flex: 1 1 140px; }
+}
