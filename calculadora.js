@@ -1000,7 +1000,7 @@
             '<td class="ac-sv-name">' + txtInput(b + '.nome', s.nome, 'Nome do serviço', ' aria-label="Nome do serviço"') +
               '<div class="ac-sv-meta"><input class="ac-input" type="text" list="ac-cats" data-bind="' + b + '.categoria" data-redraw="1" value="' + esc(s.categoria) + '" aria-label="Categoria" title="Categoria" placeholder="Categoria">' +
               txtInput(b + '.obs', s.obs, 'Observações', ' aria-label="Observações" title="Observações"') + '</div></td>' +
-            '<td class="ac-sv-hours" data-label="Horas cobradas">' + svHoursInput(b + '.horas', s.horas, 'Horas a cobrar') + '</td>' +
+            '<td class="ac-sv-hours" data-label="Horas">' + svHoursInput(b + '.horas', s.horas, 'Horas a cobrar') + '</td>' +
             '<td class="ac-sv-ref" data-label="Mín. ref.">' + svHoursInput(b + '.min', s.min, 'Referência mínima de horas') + '</td>' +
             '<td class="ac-sv-ref" data-label="Máx. ref.">' + svHoursInput(b + '.max', s.max, 'Referência máxima de horas') + '</td>' +
             '<td class="money" data-label="Valor do serviço"><span data-out="svVal" data-i="' + i + '"></span><div class="muted" data-out="svRange" data-i="' + i + '"></div></td>' +
