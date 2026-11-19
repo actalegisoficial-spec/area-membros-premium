@@ -807,7 +807,7 @@ function switchSubView(viewId) {
     document.querySelectorAll('.nav-item, .mobile-nav-item').forEach(nav => {
         if (nav.getAttribute('data-view') === viewId) {
             nav.classList.add('active');
-            let span = nav.querySelector('span');
+            let span = nav.querySelector('span:not(.unanswered-badge)');
             if(span) viewTitle = span.textContent;
         } else {
             nav.classList.remove('active');

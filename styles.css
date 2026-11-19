@@ -2042,7 +2042,7 @@ h1, h2, h3, .brand-title {
     background: #FF3B30; color: #fff; font-size: 0.72rem; font-weight: 800; line-height: 1;
     box-shadow: 0 0 0 2px var(--navy-deep, #0A0A0A);
 }
-.btn .unanswered-badge { position: absolute; top: -9px; right: -8px; }
+.btn .unanswered-badge { position: static; margin-left: 8px; vertical-align: middle; box-shadow: none; }
 .nav-item .unanswered-badge { margin-left: auto; }
 .mobile-nav-item { position: relative; }
 .mobile-nav-item .unanswered-badge { position: absolute; top: 2px; right: 2px; min-width: 17px; height: 17px; font-size: 0.65rem; padding: 0 4px; }
