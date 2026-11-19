@@ -58,6 +58,14 @@ function showLoginScreen(tab, msg, isError) {
     }
 }
 
+// Mostra/esconde a aba "Usuários" (menu lateral e barra do celular)
+function setAdminTabsVisible(visible) {
+    document.querySelectorAll('.admin-only').forEach(el => {
+        el.style.display = visible ? (el.tagName === 'LI' ? 'flex' : 'block') : 'none';
+    });
+    refreshIcons();
+}
+
 async function forceLogoutBlocked() {
     _appInitialized = false;
     try { await sb.auth.signOut(); } catch (e) {}
@@ -576,10 +584,9 @@ async function showMainApp() {
         document.getElementById('login-view').classList.remove('active');
         document.getElementById('main-layout').classList.add('active');
 
-        // 2. FORCE ADMIN TAB VISIBILITY BEFORE DB CALLS
-        document.querySelectorAll('.admin-only').forEach(el => {
-            el.style.display = isOwner ? (el.tagName === 'LI' ? 'flex' : 'block') : 'none';
-        });
+        // 2. FORCE ADMIN TAB VISIBILITY BEFORE DB CALLS (dono já vê; outros admins
+        //    passam a ver quando o perfil do banco carregar — ver setAdminTabsVisible abaixo)
+        setAdminTabsVisible(isOwner);
 
         updateGlobalUI();
         switchSubView('dashboard');
@@ -612,6 +619,8 @@ async function showMainApp() {
                         sb.from('users').update({ role: 'Administrador' }).eq('email', user.email).then();
                     }
                     state.user.isModerator = profile.role === 'Administrador' || isOwner;
+                    setAdminTabsVisible(state.user.isModerator);
+                    if (state.user.isModerator) renderUsers();
 
                     const completedIds = profile.completed_activities || [];
                     state.activities.forEach(a => { a.completed = completedIds.includes(a.id); });
