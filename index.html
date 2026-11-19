@@ -7,7 +7,8 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="styles.css?v=2.5">
+    <link rel="stylesheet" href="styles.css?v=2.6">
+    <link rel="stylesheet" href="calculadora.css?v=3">
     <!-- Lucide Icons -->
     <script src="https://unpkg.com/lucide@1.69.0/dist/umd/lucide.min.js"></script>
     <!-- Supabase JS -->
@@ -281,7 +282,7 @@
                                 <input type="password" id="login-password" placeholder="••••••••" autocomplete="current-password">
                             </div>
                             <button type="button" id="login-btn" class="btn btn-primary btn-block" onclick="doLogin()">Entrar</button>
-                            <div style="text-align:center; color:gray; font-size:10px; margin-top:10px;">Versão 2.5</div>
+                            <div style="text-align:center; color:gray; font-size:10px; margin-top:10px;">Versão 2.6</div>
                             <p id="login-error" class="auth-error"></p>
 
                         <div class="auth-links">
@@ -366,6 +367,9 @@
                     <li class="nav-item active" data-view="dashboard">
                         <i data-lucide="layout-dashboard"></i> <span>Início</span>
                     </li>
+                    <li class="nav-item" data-view="calculadora">
+                        <i data-lucide="calculator"></i> <span>Acta Price</span>
+                    </li>
                     <li class="nav-item" data-view="ranking">
                         <i data-lucide="trophy"></i> <span>Ranking</span>
                     </li>
@@ -388,7 +392,7 @@
                 <div class="sidebar-footer" style="padding: 20px; border-top: 1px solid rgba(255, 255, 255, 0.05); text-align: center; opacity: 0.3; pointer-events: none;">
                     <i data-lucide="shield-check" style="width: 20px; height: 20px; color: var(--gold); margin-bottom: 5px; display: inline-block;"></i>
                     <div style="font-size: 0.70rem; font-weight: 500; font-family: 'Outfit', sans-serif; letter-spacing: 0.5px;">PLATAFORMA PREMIUM</div>
-                    <div style="font-size: 0.65rem; margin-top: 2px;">Versão 2.5</div>
+                    <div style="font-size: 0.65rem; margin-top: 2px;">Versão 2.6</div>
                 </div>
             </nav>
 
@@ -457,6 +461,8 @@
                 <div id="dashboard-view" class="sub-view active">
                     <!-- Dashboard content injected via JS -->
                 </div>
+                <div id="calculadora-view" class="sub-view"></div>
+
                 <div id="progress-view" class="sub-view">
                     <!-- Progress marks content -->
                 </div>
@@ -486,6 +492,7 @@
             <!-- Mobile Navbar -->
             <nav class="mobile-nav">
                 <div class="mobile-nav-item active" data-view="dashboard"><i data-lucide="home"></i></div>
+                <div class="mobile-nav-item" data-view="calculadora"><i data-lucide="calculator"></i></div>
                 <div class="mobile-nav-item" data-view="ranking"><i data-lucide="trophy"></i></div>
                 <div class="mobile-nav-item" data-view="community"><i data-lucide="users"></i></div>
                 <div class="mobile-nav-item" data-view="servicos"><i data-lucide="briefcase"></i></div>
@@ -514,6 +521,7 @@
     <!-- Toast Container -->
     <div id="toast-container"></div>
 
-    <script src="app.js?v=2.5.3"></script>
+    <script src="app.js?v=2.6"></script>
+    <script src="calculadora.js?v=3"></script>
 </body>
 </html>

@@ -248,6 +248,7 @@ async function checkSession() {
             if (window.__authRecovery) return;
             showMainApp();
         } else if (event === 'SIGNED_OUT') {
+            if (window.ActaCalc) ActaCalc.reset(); // limpa dados do Acta Price de quem saiu
             _appInitialized = false; state.profileLoaded = false; // Reseta flag para permitir novo login
             document.getElementById('main-layout').classList.remove('active');
             document.getElementById('login-view').classList.add('active');
@@ -828,6 +829,7 @@ function switchSubView(viewId) {
 function renderContent(viewId) {
     switch (viewId) {
         case 'dashboard': renderDashboard(); break;
+        case 'calculadora': if (window.ActaCalc) ActaCalc.render(document.getElementById('calculadora-view')); break;
         case 'progress': renderProgress(); break;
         case 'ranking': renderRanking(); break;
         case 'community': renderCommunity(); break;
