@@ -1389,12 +1389,16 @@ window.appPostReply = async (topicId, btn) => {
 
 window.appDeleteTopic = async (topicId) => {
     if (!confirm('Deseja realmente excluir este tópico e todas as respostas?')) return;
-    const { error } = await sb.from('community_topics').delete().eq('id', topicId);
-    if (error) {
-        window.appShowToast('Erro ao excluir tópico: ' + error.message, 'error');
+    const { data, error } = await sb.from('community_topics').delete().eq('id', topicId).select('id');
+    if (error || !data || data.length === 0) {
+        window.appShowToast('Não foi possível excluir o tópico.' + (error ? ' ' + error.message : ' Você não tem permissão.'), 'error');
     } else {
+        // Remove da tela na hora (não depende do Realtime)
+        state.communityTopics = state.communityTopics.filter(t => t.id !== topicId);
+        if (state.currentTopicId === topicId) state.currentTopicId = null;
+        const searchInput = document.getElementById('community-search');
+        renderCommunity(state.currentTheme || null, searchInput && searchInput.value ? searchInput.value : null);
         window.appShowToast('Tópico excluído.', 'success');
-        // Realtime will update the list
     }
 };
 
@@ -1432,9 +1436,9 @@ window.appPostTopic = async (theme, btn) => {
 
 window.appDeleteReply = async (topicId, replyId) => {
     if (!confirm('Deseja excluir esta resposta?')) return;
-    const { error } = await sb.from('community_replies').delete().eq('id', replyId);
-    if (error) {
-        window.appShowToast('Erro ao excluir resposta: ' + error.message, 'error');
+    const { data, error } = await sb.from('community_replies').delete().eq('id', replyId).select('id');
+    if (error || !data || data.length === 0) {
+        window.appShowToast('Não foi possível excluir a resposta.' + (error ? ' ' + error.message : ' Você não tem permissão.'), 'error');
     } else {
         window.appShowTopic(topicId);
         window.appShowToast('Resposta excluída.', 'success');
@@ -1546,25 +1550,33 @@ window.appToggleMuralLike = async (postId, btnElement) => {
         newLikedBy = [...post.liked_by, userEmail];
     }
 
-    const { error } = await sb
+    const { data, error } = await sb
         .from('mural_posts')
         .update({ 
             liked_by: newLikedBy,
             likes: newLikedBy.length
         })
-        .eq('id', postId);
+        .eq('id', postId)
+        .select('id, liked_by, likes');
 
-    if (error) {
-        window.appShowToast('Erro ao curtir: ' + error.message, 'error');
+    if (error || !data || data.length === 0) {
+        window.appShowToast('Não foi possível curtir.' + (error ? ' ' + error.message : ''), 'error');
+    } else {
+        // Atualiza na hora com o que o banco gravou
+        post.liked_by = data[0].liked_by || [];
+        post.likes = data[0].likes || 0;
+        keepDrafts(renderMural);
     }
 };
 
 window.appDeleteMuralPost = async (postId) => {
     if (!confirm('Deseja excluir esta postagem do mural?')) return;
-    const { error } = await sb.from('mural_posts').delete().eq('id', postId);
-    if (error) {
-        window.appShowToast('Erro ao excluir: ' + error.message, 'error');
+    const { data, error } = await sb.from('mural_posts').delete().eq('id', postId).select('id');
+    if (error || !data || data.length === 0) {
+        window.appShowToast('Não foi possível excluir a postagem.' + (error ? ' ' + error.message : ' Você não tem permissão.'), 'error');
     } else {
+        state.muralPosts = state.muralPosts.filter(p => p.id !== postId);
+        keepDrafts(renderMural);
         window.appShowToast('Postagem excluída.', 'success');
     }
 };
@@ -1728,10 +1740,11 @@ window.appSearchServicos = () => {
 
 window.appAskDeleteServico = (id) => {
     appShowModal('Confirmar Exclusão', '<p>Deseja realmente excluir este anúncio de serviço?</p>', async () => {
-        const { error } = await sb.from('servicos_posts').delete().eq('id', id);
-        if (error) {
-            window.appShowToast('Erro ao excluir: ' + error.message, 'error');
+        const { data, error } = await sb.from('servicos_posts').delete().eq('id', id).select('id');
+        if (error || !data || data.length === 0) {
+            window.appShowToast('Não foi possível excluir o anúncio.' + (error ? ' ' + error.message : ' Você não tem permissão.'), 'error');
         } else {
+            state.servicosPosts = state.servicosPosts.filter(p => p.id !== id);
             renderServicos();
             window.appShowToast('Anúncio excluído.', 'success');
         }
@@ -1749,10 +1762,11 @@ window.appDeleteServico = (id) => {
 window.appToggleServicoStatus = async (id) => {
     const post = state.servicosPosts.find(p => p.id === id);
     if (post) {
-        const { error } = await sb.from('servicos_posts').update({ finalized: !post.finalized }).eq('id', id);
-        if (error) {
-            window.appShowToast('Erro ao atualizar status: ' + error.message, 'error');
+        const { data, error } = await sb.from('servicos_posts').update({ finalized: !post.finalized }).eq('id', id).select('id, finalized');
+        if (error || !data || data.length === 0) {
+            window.appShowToast('Não foi possível atualizar o status.' + (error ? ' ' + error.message : ''), 'error');
         } else {
+            post.finalized = data[0].finalized;
             renderServicos();
         }
     }
@@ -1786,9 +1800,9 @@ window.appPostServicoComment = async (postId, btn) => {
 
 window.appAskDeleteServicoComment = (postId, commentId) => {
     appShowModal('Excluir Comentário', '<p>Deseja remover este comentário de contato?</p>', async () => {
-        const { error } = await sb.from('servicos_replies').delete().eq('id', commentId);
-        if (error) {
-            window.appShowToast('Erro ao excluir: ' + error.message, 'error');
+        const { data, error } = await sb.from('servicos_replies').delete().eq('id', commentId).select('id');
+        if (error || !data || data.length === 0) {
+            window.appShowToast('Não foi possível excluir o comentário.' + (error ? ' ' + error.message : ' Você não tem permissão.'), 'error');
         } else {
             renderServicos();
             window.appShowToast('Comentário removido.', 'success');
