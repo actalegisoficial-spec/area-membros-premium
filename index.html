@@ -7,9 +7,9 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="styles.css?v=2.3">
+    <link rel="stylesheet" href="styles.css?v=2.4">
     <!-- Lucide Icons -->
-    <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="https://unpkg.com/lucide@1.69.0/dist/umd/lucide.min.js"></script>
     <!-- Supabase JS -->
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <!-- Canvas Confetti -->
@@ -281,7 +281,7 @@
                                 <input type="password" id="login-password" placeholder="••••••••" autocomplete="current-password">
                             </div>
                             <button type="button" id="login-btn" class="btn btn-primary btn-block" onclick="doLogin()">Entrar</button>
-                            <div style="text-align:center; color:gray; font-size:10px; margin-top:10px;">Versão 2.3</div>
+                            <div style="text-align:center; color:gray; font-size:10px; margin-top:10px;">Versão 2.4</div>
                             <p id="login-error" class="auth-error"></p>
 
                         <div class="auth-links">
@@ -388,7 +388,7 @@
                 <div class="sidebar-footer" style="padding: 20px; border-top: 1px solid rgba(255, 255, 255, 0.05); text-align: center; opacity: 0.3; pointer-events: none;">
                     <i data-lucide="shield-check" style="width: 20px; height: 20px; color: var(--gold); margin-bottom: 5px; display: inline-block;"></i>
                     <div style="font-size: 0.70rem; font-weight: 500; font-family: 'Outfit', sans-serif; letter-spacing: 0.5px;">PLATAFORMA PREMIUM</div>
-                    <div style="font-size: 0.65rem; margin-top: 2px;">Versão 2.3</div>
+                    <div style="font-size: 0.65rem; margin-top: 2px;">Versão 2.4</div>
                 </div>
             </nav>
 
@@ -400,8 +400,10 @@
                     
                     <div class="top-bar-right-container" style="display: flex; align-items: center; gap: 20px;">
                         
-                        <!-- Acesso Rápido na Top-Bar -->
-                        <div class="top-bar-actions" style="display: flex; gap: 12px;">
+                        <!-- Acesso Rápido na Top-Bar (IA Acta + Grupo VIP)
+                             DESATIVADO a pedido do dono em 2026-11-19 — escondido, NÃO excluir.
+                             Para reativar: trocar "display: none" por "display: flex" abaixo. -->
+                        <div class="top-bar-actions" style="display: none; gap: 12px;">
                             <a href="https://chatgpt.com/g/g-69b9959b9c6481919f727e21df289ca4-charles-nunes-expert-1-0-para-alunos"
                                target="_blank" rel="noopener noreferrer"
                                class="tb-action-btn tb-action-ai" title="IA do Charles">
@@ -512,6 +514,6 @@
     <!-- Toast Container -->
     <div id="toast-container"></div>
 
-    <script src="app.js?v=2.3"></script>
+    <script src="app.js?v=2.4"></script>
 </body>
 </html>

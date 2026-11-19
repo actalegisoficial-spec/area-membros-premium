@@ -261,7 +261,32 @@ window.appSwitchAuthTab = (tab) => {
     });
 };
 
+// Re-renderiza uma tela sem apagar o que o aluno está digitando
+// (usado quando o Realtime atualiza Mural/Comunidade/Serviços enquanto alguém escreve)
+const DRAFT_FIELD_SELECTOR = '#mural-text, #mural-cat, #topic-title, #topic-text, #reply-text, #servico-city, #servico-need, [id^="comment-input-"]';
+async function keepDrafts(renderFn) {
+    const saved = {};
+    document.querySelectorAll(DRAFT_FIELD_SELECTOR).forEach(el => { if (el.id) saved[el.id] = el.value; });
+    const active = document.activeElement;
+    const activeId = active && active.id && saved.hasOwnProperty(active.id) ? active.id : null;
+    const caret = activeId && typeof active.selectionStart === 'number' ? active.selectionStart : null;
+    await renderFn();
+    Object.keys(saved).forEach(id => {
+        const el = document.getElementById(id);
+        if (el && saved[id]) el.value = saved[id];
+    });
+    if (activeId) {
+        const el = document.getElementById(activeId);
+        if (el) {
+            el.focus();
+            if (caret !== null && el.setSelectionRange) { try { el.setSelectionRange(caret, caret); } catch (e) {} }
+        }
+    }
+}
+
 function setupRealtime() {
+    // Evita canais duplicados se o usuário sair e entrar de novo sem recarregar a página
+    try { sb.removeAllChannels(); } catch (e) {}
 
     // --- Helpers de atualização cirúrgica ---
     function applyPayloadToArray(arr, payload) {
@@ -286,7 +311,7 @@ function setupRealtime() {
             applyPayloadToArray(state.muralPosts, payload);
             // Garante ordem decrescente por data
             state.muralPosts.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
-            if (document.getElementById('mural-view').classList.contains('active')) renderMural();
+            if (document.getElementById('mural-view').classList.contains('active')) keepDrafts(renderMural);
         })
         .subscribe();
 
@@ -297,8 +322,16 @@ function setupRealtime() {
             applyPayloadToArray(state.communityTopics, payload);
             state.communityTopics.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
             if (document.getElementById('community-view').classList.contains('active')) {
+                if (state.currentTopicId) {
+                    // Aluno está lendo uma discussão: não tira ele da tela.
+                    // Só volta para a lista se o próprio tópico aberto foi excluído.
+                    if (payload.eventType === 'DELETE' && payload.old && payload.old.id === state.currentTopicId) {
+                        renderCommunity(state.currentTheme || null);
+                    }
+                    return;
+                }
                 const searchInput = document.getElementById('community-search');
-                renderCommunity(state.currentTheme || null, searchInput ? searchInput.value : null);
+                keepDrafts(() => renderCommunity(state.currentTheme || null, searchInput ? searchInput.value : null));
             }
         })
         .subscribe();
@@ -307,8 +340,11 @@ function setupRealtime() {
     sb
         .channel('public:community_replies')
         .on('postgres_changes', { event: '*', schema: 'public', table: 'community_replies' }, (payload) => {
-            if (state.currentTopicId && payload.new && payload.new.topic_id === state.currentTopicId) {
-                window.appShowTopic(state.currentTopicId);
+            if (!state.currentTopicId) return;
+            // Em exclusões o Supabase só manda o id antigo (sem topic_id), então recarrega o tópico aberto
+            const isDelete = payload.eventType === 'DELETE';
+            if (isDelete || (payload.new && payload.new.topic_id === state.currentTopicId)) {
+                keepDrafts(() => window.appShowTopic(state.currentTopicId));
             }
         })
         .subscribe();
@@ -356,8 +392,22 @@ function setupRealtime() {
                 }
             }
 
+            // Pontos de outros alunos mudam a posição deste aluno no ranking
+            if (state.user && state.level) {
+                const oldPos = state.rankingPosition;
+                updateLevel();
+                if (oldPos !== state.rankingPosition && document.getElementById('dashboard-view').classList.contains('active')) renderDashboard();
+            }
             if (document.getElementById('ranking-view').classList.contains('active')) renderRanking();
-            if (document.getElementById('users-view').classList.contains('active')) renderUsers();
+            if (document.getElementById('users-view').classList.contains('active')) {
+                // Mantém a rolagem da tabela (antes pulava pro topo a cada aluno que marcava progresso)
+                const c = document.getElementById('users-table-container');
+                const top = c ? c.scrollTop : 0, left = c ? c.scrollLeft : 0, pageY = window.scrollY;
+                renderUsers();
+                const c2 = document.getElementById('users-table-container');
+                if (c2) { c2.scrollTop = top; c2.scrollLeft = left; }
+                window.scrollTo(0, pageY);
+            }
         })
         .subscribe();
 
@@ -369,7 +419,7 @@ function setupRealtime() {
             state.servicosPosts.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
             if (document.getElementById('servicos-view').classList.contains('active')) {
                 const searchInput = document.getElementById('servicos-search-input');
-                renderServicos(searchInput ? searchInput.value : '');
+                keepDrafts(() => renderServicos(searchInput ? searchInput.value : ''));
             }
         })
         .subscribe();
@@ -380,7 +430,7 @@ function setupRealtime() {
         .on('postgres_changes', { event: '*', schema: 'public', table: 'servicos_replies' }, () => {
             if (document.getElementById('servicos-view').classList.contains('active')) {
                 const searchInput = document.getElementById('servicos-search-input');
-                renderServicos(searchInput ? searchInput.value : '');
+                keepDrafts(() => renderServicos(searchInput ? searchInput.value : ''));
             }
         })
         .subscribe();
@@ -878,7 +928,7 @@ function renderFranquias() {
 }
 
 function renderDashboard() {
-    console.log('[Dashboard] Renderizando v2.1...');
+    console.log('[Dashboard] Renderizando...');
     try {
     const nextLevel = LEVELS[LEVELS.indexOf(state.level) + 1] || 'Limites Alcançados';
     
@@ -990,9 +1040,11 @@ window.appToggleActivity = (id) => {
     if (act.completed && act.milestone) triggerConfetti();
     
     updateLevel();
-    saveState();
+    saveState().then(ok => {
+        if (!ok) window.appShowToast('Não foi possível salvar seu progresso no servidor. Verifique sua internet e tente de novo.', 'error');
+    });
     updateGlobalUI();
-    
+
     const dashPoints = document.getElementById('dash-points');
     if (dashPoints) {
         const currentVal = parseInt(dashPoints.textContent.replace(/\./g, '')) || 0;
@@ -1210,7 +1262,7 @@ async function renderCommunity(selectedTheme = null, searchQuery = null) {
                             <div class="topic-title">${sanitizeHTML(t.title)}</div>
                             <div class="topic-meta">
                                 <span style="text-decoration: underline;">Ver discussão</span>
-                                ${state.user.isModerator ? `<button class="btn-delete" onclick="event.stopPropagation(); window.appDeleteTopic(${t.id})"><i data-lucide="trash-2"></i> Excluir</button>` : ''}
+                                ${(state.user.isModerator || t.user_email === state.user.email) ? `<button class="btn-delete" onclick="event.stopPropagation(); window.appDeleteTopic(${t.id})"><i data-lucide="trash-2"></i> Excluir</button>` : ''}
                             </div>
                         </div>
                     `).join('') || '<div class="empty-state"><i data-lucide="message-square-dashed"></i><p>Nenhum tópico encontrado. Seja o primeiro a iniciar uma discussão!</p></div>'}
@@ -1296,6 +1348,7 @@ window.appPostReply = async (topicId, btn) => {
     if (error) {
         window.appShowToast('Erro ao enviar resposta: ' + error.message, 'error');
     } else {
+        replyEl.value = '';
         window.appShowTopic(topicId);
         window.appShowToast('Resposta enviada!', 'success');
     }
@@ -1334,6 +1387,8 @@ window.appPostTopic = async (theme, btn) => {
     if (error) {
         window.appShowToast('Erro ao criar tópico: ' + error.message, 'error');
     } else {
+        titleEl.value = '';
+        textEl.value = '';
         if (data && !state.communityTopics.find(t => t.id === data.id)) {
             state.communityTopics.unshift(data);
         }
@@ -2412,10 +2467,12 @@ window.appShowToast = (message, type = 'success') => {
     
     const iconName = type === 'success' ? 'check-circle' : (type === 'error' ? 'alert-circle' : 'info');
     
+    // Mensagem via textContent: nomes de usuário aparecem aqui e não podem virar HTML
     toast.innerHTML = `
         <i data-lucide="${iconName}"></i>
-        <div style="flex: 1; font-weight: 500;">${message}</div>
+        <div style="flex: 1; font-weight: 500;"></div>
     `;
+    toast.querySelector('div').textContent = String(message);
     
     container.appendChild(toast);
     refreshIcons();
