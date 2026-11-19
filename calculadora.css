@@ -348,7 +348,7 @@
   .ac-table:not(.view) tr.ac-cat td { padding: 10px 12px; }
   .ac-table:not(.view) td.ac-sv-name { grid-column: 1 / -1; }
   .ac-table:not(.view) td.money { grid-column: 1 / 4; }
-  .ac-table:not(.view) td[data-label]::before { content: attr(data-label); display: block; font-size: .66rem; text-transform: uppercase; letter-spacing: .5px; color: var(--text-muted, #888); margin-bottom: 4px; font-weight: 700; }
+  .ac-table:not(.view) td[data-label]::before { content: attr(data-label); display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: .62rem; text-transform: uppercase; letter-spacing: .5px; color: var(--text-muted, #888); margin-bottom: 4px; font-weight: 700; }
   .ac-table:not(.view) .ac-affix, .ac-table:not(.view) .ac-affix .ac-input.num { width: 100%; margin: 0; }
   .ac-table:not(.view) .ac-sv-meta { flex-wrap: wrap; }
   .ac-table:not(.view) .ac-sv-meta .ac-input { flex: 1 1 140px; }
