@@ -982,8 +982,11 @@
   function svHoursInput(bind, value, aria) { return numInput(bind, value, { suffix: 'h', aria: aria, cls: 'num', max: 2000 }); }
 
   function tabServicos() {
-    var editing = !!S.svDraft;
-    var list = editing ? S.svDraft : S.profile.servicos;
+    // Lista sempre aberta para edição (pedido do dono em 2026-11-19): o rascunho
+    // é criado ao abrir a aba e "Salvar serviços" grava mantendo a lista aberta.
+    if (!S.svDraft) S.svDraft = clone(S.profile.servicos);
+    var editing = true;
+    var list = S.svDraft;
     var cats = categorias(list);
     var cols = editing ? 6 : 5;
     var rows = '';
@@ -1013,29 +1016,24 @@
       });
     });
 
-    var actions = editing ?
-      '<button type="button" class="ac-btn ac-btn-ghost ac-btn-sm" data-act="add" data-list="servicos">' + icon('plus') + 'Novo serviço</button>' +
-      '<button type="button" class="ac-btn ac-btn-ghost ac-btn-sm" data-act="cancelSv">' + icon('x') + 'Cancelar</button>' +
-      '<button type="button" class="ac-btn ac-btn-primary ac-btn-sm" data-act="saveSv">' + icon('save') + 'Salvar serviços</button>'
-      :
+    var actions =
       '<button type="button" class="ac-btn ac-btn-ghost ac-btn-sm" data-act="restore">' + icon('rotate-ccw') + 'Restaurar lista padrão</button>' +
       '<button type="button" class="ac-btn ac-btn-ghost ac-btn-sm" data-act="add" data-list="servicos">' + icon('plus') + 'Novo serviço</button>' +
-      '<button type="button" class="ac-btn ac-btn-primary ac-btn-sm" data-act="editSv">' + icon('pencil') + 'Editar serviços</button>';
+      '<button type="button" class="ac-btn ac-btn-primary ac-btn-sm" data-act="saveSv">' + icon('save') + 'Salvar serviços</button>';
 
-    var revisar = !editing && !S.profile.flags.servicosConfirmados ?
-      '<div class="ac-banner">' + icon('list-checks') + '<div><strong>Revise seus serviços.</strong> Confira se as horas a cobrar fazem sentido para a sua realidade. Ajuste em <strong>Editar serviços</strong> ou, se a lista já estiver boa, confirme.' +
-      '<div class="ac-actions" style="margin-top:10px"><button type="button" class="ac-btn ac-btn-primary ac-btn-sm" data-act="confirmSv">' + icon('check') + 'Revisei, a lista está certa</button>' +
-      '<button type="button" class="ac-btn ac-btn-ghost ac-btn-sm" data-act="editSv">' + icon('pencil') + 'Editar serviços</button></div></div></div>' : '';
+    var revisar = !S.profile.flags.servicosConfirmados ?
+      '<div class="ac-banner">' + icon('list-checks') + '<div><strong>Revise seus serviços.</strong> Confira se as horas a cobrar fazem sentido para a sua realidade. Ajuste direto na lista abaixo e clique em <strong>Salvar serviços</strong> ou, se a lista já estiver boa, confirme.' +
+      '<div class="ac-actions" style="margin-top:10px"><button type="button" class="ac-btn ac-btn-primary ac-btn-sm" data-act="confirmSv">' + icon('check') + 'Revisei, a lista está certa</button></div></div></div>' : '';
 
     return horaZeradaBanner() + revisar + guide('Como funciona esta aba', [
       '<p>É a sua tabela de serviços. Para cada um você define as <strong>horas a cobrar</strong>. Esse número é multiplicado pelo valor da sua hora e é ele que entra no Orçamento e no Cálculo Rápido.</p>',
       '<p><strong>Mín. e Máx.</strong> são apenas <strong>referências</strong> de quanto o serviço costuma variar (um caso simples ou um caso complexo). Não entram no cálculo, só ajudam você a ajustar as horas de cada proposta.</p>',
       '<h4>Nas horas a cobrar, inclua</h4><ul><li>Atendimento ao cliente e reuniões</li><li>Pesquisa e análise documental</li><li>Contatos com cartório/prefeitura</li><li>Preparação de documentos, protocolos e acompanhamentos</li></ul>',
       '<h4>Não inclua</h4><ul><li>Horas que dependem de terceiros</li><li>Retrabalho por falta de documentação (são exceções)</li></ul>',
-      '<h4>Revise periodicamente</h4><p>Ganhou experiência e ficou mais rápido? Os serviços ficaram mais burocráticos? Clique em <strong>Editar serviços</strong>, ajuste e salve.</p>'
+      '<h4>Revise periodicamente</h4><p>Ganhou experiência e ficou mais rápido? Os serviços ficaram mais burocráticos? Ajuste direto na lista e clique em <strong>Salvar serviços</strong>.</p>'
     ].join('')) +
     '<section class="ac-card' + (editing ? ' gold' : '') + '"><div class="ac-toolbar"><div><h3 class="ac-card-title" style="margin:0">' + icon('list-checks') + 'Meus serviços ' + help('horasCobrar') + '</h3>' +
-      '<p class="ac-card-sub" style="margin:4px 0 0">' + (editing ? '<strong style="color:var(--gold)">Modo edição.</strong> Altere o que precisar e clique em <strong>Salvar serviços</strong>.' : 'Valores calculados com a sua hora de <strong data-out="precoHora"></strong>.') + '</p></div>' +
+      '<p class="ac-card-sub" style="margin:4px 0 0">' + 'Valores calculados com a sua hora de <strong data-out="precoHora"></strong>. Altere o que precisar e clique em <strong>Salvar serviços</strong>.' + '</p></div>' +
       '<div class="ac-actions" style="margin:0">' + actions + '</div></div>' +
       '<div class="ac-legend"><span><span class="ac-hours-pill">h</span> <strong>Horas a cobrar</strong>: entram no cálculo do valor</span><span><span class="ac-ref">h</span> <strong>Mín. / Máx.</strong>: só referência de variação</span></div>' +
       '<datalist id="ac-cats">' + cats.map(function (c) { return '<option value="' + esc(c) + '">'; }).join('') + '</datalist>' +
@@ -1043,7 +1041,9 @@
         '<th scope="col" class="c">Horas a cobrar</th><th scope="col" class="c">Mín. (ref.)</th><th scope="col" class="c">Máx. (ref.)</th>' +
         '<th scope="col" style="text-align:right">Valor do serviço</th>' + (editing ? '<th><span class="ac-sr">Ações</span></th>' : '') + '</tr></thead><tbody>' + rows + '</tbody></table></div>'
         : '<div class="ac-empty">Nenhum serviço cadastrado. Clique em <strong>Novo serviço</strong> ou restaure a lista padrão.</div>') +
-      (editing ? '<div class="ac-actions" style="justify-content:flex-end"><button type="button" class="ac-btn ac-btn-ghost" data-act="cancelSv">' + icon('x') + 'Cancelar</button><button type="button" class="ac-btn ac-btn-primary" data-act="saveSv">' + icon('save') + 'Salvar serviços</button></div>' : '') +
+      '<div class="ac-actions" style="justify-content:flex-end">' +
+        '<button type="button" class="ac-btn ac-btn-ghost" data-act="cancelSv">' + icon('undo-2') + 'Desfazer alterações</button>' +
+        '<button type="button" class="ac-btn ac-btn-primary" data-act="saveSv">' + icon('save') + 'Salvar serviços</button></div>' +
     '</section>';
   }
 
@@ -1639,13 +1639,14 @@
         S.svDraft = clone(S.profile.servicos); redrawTab();
         return;
       case 'cancelSv':
-        if (draftDirty('sv') && !confirm('Descartar as alterações nos serviços?')) return;
+        if (!draftDirty('sv')) { toast('Não há alterações para desfazer.', 'info'); return; }
+        if (!confirm('Desfazer as alterações que ainda não foram salvas?')) return;
         S.svDraft = null; redrawTab();
         return;
       case 'saveSv':
         var validos = S.svDraft.filter(function (s) { return (s.nome || '').trim(); });
         var vazios = S.svDraft.length - validos.length;
-        S.profile.servicos = validos; S.svDraft = null; S.profile.flags.servicosConfirmados = true;
+        S.profile.servicos = validos; S.svDraft = clone(validos); S.profile.flags.servicosConfirmados = true;
         scheduleProfileSave();
         saveProfileNow().then(function (ok) {
           toast(ok ? 'Serviços salvos.' + (vazios ? ' ' + vazios + ' linha(s) sem nome foram descartadas.' : '') : 'Sem conexão. Os serviços serão salvos assim que a internet voltar.', ok ? 'success' : 'error');
@@ -1670,7 +1671,7 @@
         return;
       case 'restore':
         if (!confirm('Restaurar a lista padrão de serviços? Os serviços que você criou ou editou serão substituídos.')) return;
-        S.profile.servicos = defaultServicos(); scheduleProfileSave(); redrawTab();
+        S.profile.servicos = defaultServicos(); S.svDraft = null; scheduleProfileSave(); redrawTab();
         toast('Lista padrão restaurada.');
         return;
       case 'mais':
@@ -1747,8 +1748,16 @@
         }
         touchOrc(); clearTimeout(S.oTimer); S.oTimer = null;
         saveOrcNow(S.orc).then(function (ok) {
-          updateEditorStatus();
-          toast(ok ? 'Rascunho salvo. Ele está em "Rascunhos".' : 'Sem conexão. O rascunho será salvo assim que a internet voltar.', ok ? 'success' : 'error');
+          if (!ok) {
+            updateEditorStatus();
+            toast('Sem conexão. O rascunho será salvo assim que a internet voltar.', 'error');
+            return;
+          }
+          // Salvou: fecha o editor e volta para a lista de orçamentos (Rascunhos)
+          S.orcView = 'lista'; S.orc = null; S.undoAjuste = null;
+          redrawTab();
+          try { S.root.scrollIntoView({ block: 'start', behavior: 'smooth' }); } catch (x) { /* noop */ }
+          toast('Rascunho salvo. Ele está em "Rascunhos".');
         });
         return;
       case 'ajustarMeta':
