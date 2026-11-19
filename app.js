@@ -175,7 +175,9 @@ function formatPoints(pts) {
 function animatePoints(elementId, start, end, duration = 1000) {
     const obj = document.getElementById(elementId);
     if (!obj) return;
-    
+    // Aba em segundo plano não roda animação: mostra o valor final direto
+    if (document.hidden) { obj.textContent = `${formatPoints(end)} pts`; return; }
+
     let startTimestamp = null;
     const step = (timestamp) => {
         if (!startTimestamp) startTimestamp = timestamp;
