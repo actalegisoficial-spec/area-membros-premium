@@ -1783,7 +1783,9 @@ function updateLevel() {
     
     if (oldLevel && oldLevel !== state.level) {
         const levelsAsc = ['PARAQUEDISTA', 'Posicionado', 'Investigador', 'Analista', 'Desenrolado', 'expert'];
-        if (levelsAsc.indexOf(state.level) > levelsAsc.indexOf(oldLevel)) {
+        // Só comemora subida real de nível (o valor inicial 'Iniciante' não está na lista
+        // e fazia aparecer confete + "Parabéns" toda vez que alguém entrava)
+        if (levelsAsc.includes(oldLevel) && levelsAsc.indexOf(state.level) > levelsAsc.indexOf(oldLevel)) {
             triggerConfetti();
         }
     }
