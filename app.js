@@ -328,6 +328,7 @@ async function setupRealtime() {
         .on('postgres_changes', { event: '*', schema: 'public', table: 'community_topics' }, (payload) => {
             applyPayloadToArray(state.communityTopics, payload);
             state.communityTopics.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+            updateCommunityNavBadge();
             if (document.getElementById('community-view').classList.contains('active')) {
                 if (state.currentTopicId) {
                     // Aluno está lendo uma discussão: não tira ele da tela.
@@ -347,6 +348,7 @@ async function setupRealtime() {
     sb
         .channel('public:community_replies')
         .on('postgres_changes', { event: '*', schema: 'public', table: 'community_replies' }, (payload) => {
+            refreshCommunityCounts();
             if (!state.currentTopicId) return;
             // Em exclusões o Supabase só manda o id antigo (sem topic_id), então recarrega o tópico aberto
             const isDelete = payload.eventType === 'DELETE';
@@ -647,6 +649,10 @@ async function showMainApp() {
 
         updateGlobalUI();
         switchSubView('dashboard');
+
+        // Contador de tópicos sem resposta no menu "Comunidade" (não bloqueia a tela)
+        state.answeredTopics = null;
+        loadCommunityCounts();
 
         // FIX 4: Abre Realtime só após login confirmado (não para visitantes)
         setupRealtime();
@@ -1226,8 +1232,72 @@ function renderRanking() {
     `;
 }
 
+
+// ---------------------------------------------------------------------------
+// Comunidade: tópicos SEM RESPOSTA (ninguém além do autor respondeu)
+// Mostra contador em cada tema, no menu "Comunidade" e selo dentro da lista.
+// ---------------------------------------------------------------------------
+const COMMUNITY_THEMES = ['Usucapião', 'Construção', 'Venda e Compra', 'Judiciais', 'Documentação', 'Dúvidas Gerais'];
+state.answeredTopics = null; // Set com ids de tópicos que já têm resposta de outra pessoa
+
+async function loadCommunityCounts() {
+    try {
+        if (state.communityTopics.length === 0) {
+            const { data: tps } = await sb.from('community_topics').select('*').order('created_at', { ascending: false });
+            state.communityTopics = tps || [];
+        }
+        // Só os campos necessários (leve): de qual tópico e quem respondeu
+        const { data, error } = await sb.from('community_replies').select('topic_id, user_email');
+        if (error) throw error;
+        const autor = {};
+        state.communityTopics.forEach(t => { autor[t.id] = String(t.user_email || '').toLowerCase(); });
+        const ans = new Set();
+        (data || []).forEach(r => {
+            if (String(r.user_email || '').toLowerCase() !== autor[r.topic_id]) ans.add(r.topic_id);
+        });
+        state.answeredTopics = ans;
+    } catch (e) {
+        console.warn('Erro ao contar tópicos sem resposta:', e);
+    }
+    updateCommunityNavBadge();
+}
+
+function isUnanswered(t) {
+    return !!state.answeredTopics && !state.answeredTopics.has(t.id);
+}
+
+function unansweredCount(theme) {
+    if (!state.answeredTopics) return 0;
+    return state.communityTopics.filter(t => (!theme || t.theme === theme) && isUnanswered(t)).length;
+}
+
+// Bolinha com o total no menu lateral e na barra do celular
+function updateCommunityNavBadge() {
+    const total = unansweredCount(null);
+    document.querySelectorAll('.nav-item[data-view="community"], .mobile-nav-item[data-view="community"]').forEach(el => {
+        let b = el.querySelector('.unanswered-badge');
+        if (!total) { if (b) b.remove(); return; }
+        if (!b) { b = document.createElement('span'); b.className = 'unanswered-badge'; el.appendChild(b); }
+        b.textContent = total > 99 ? '99+' : String(total);
+        b.title = total + (total === 1 ? ' tópico sem resposta' : ' tópicos sem resposta');
+    });
+}
+
+let _countsTimer = null;
+function refreshCommunityCounts() {
+    clearTimeout(_countsTimer);
+    _countsTimer = setTimeout(async () => {
+        await loadCommunityCounts();
+        const view = document.getElementById('community-view');
+        if (view && view.classList.contains('active') && !state.currentTopicId) {
+            const searchInput = document.getElementById('community-search');
+            keepDrafts(() => renderCommunity(state.currentTheme || null, searchInput && searchInput.value ? searchInput.value : null));
+        }
+    }, 400);
+}
+
 async function renderCommunity(selectedTheme = null, searchQuery = null) {
-    const tabs = ['Usucapião', 'Construção', 'Venda e Compra', 'Judiciais', 'Documentação', 'Dúvidas Gerais'];
+    const tabs = COMMUNITY_THEMES;
     const view = document.getElementById('community-view');
     if (!view) return;
 
@@ -1240,8 +1310,11 @@ async function renderCommunity(selectedTheme = null, searchQuery = null) {
         const { data } = await sb.from('community_topics').select('*').order('created_at', { ascending: false });
         state.communityTopics = data || [];
     }
+    if (!state.answeredTopics) await loadCommunityCounts();
 
-    let html = `<div class="view-header"><h2>Comunidade por Temas</h2></div>`;
+    const totalSemResposta = unansweredCount(null);
+    let html = `<div class="view-header"><h2>Comunidade por Temas</h2>
+        ${totalSemResposta ? `<p class="unanswered-hint">🔔 ${totalSemResposta === 1 ? 'Há 1 tópico esperando resposta' : `Há ${totalSemResposta} tópicos esperando resposta`}. Que tal ajudar um colega?</p>` : ''}</div>`;
     
     // Search Bar
     html += `
@@ -1255,10 +1328,11 @@ async function renderCommunity(selectedTheme = null, searchQuery = null) {
 
     // Tabs
     html += `
-        <div style="display: flex; gap: 10px; overflow-x: auto; margin-bottom: 20px; padding: 10px 0;">
+        <div style="display: flex; gap: 12px; overflow-x: auto; margin-bottom: 20px; padding: 14px 10px 10px 0;">
             ${tabs.map(t => `
-                <button class="btn" onclick="renderCommunity('${t}')" style="padding: 10px 20px; font-size: 0.95rem; background: ${selectedTheme === t && !searchQuery ? 'var(--gold)' : 'white'}; color: ${selectedTheme === t && !searchQuery ? 'black' : 'var(--navy-deep)'}; border: 1px solid #DDD; white-space: nowrap; font-weight: ${selectedTheme === t && !searchQuery ? '700' : '500'};">
+                <button class="btn" onclick="renderCommunity('${t}')" style="position: relative; padding: 10px 20px; font-size: 0.95rem; background: ${selectedTheme === t && !searchQuery ? 'var(--gold)' : 'white'}; color: ${selectedTheme === t && !searchQuery ? 'black' : 'var(--navy-deep)'}; border: 1px solid #DDD; white-space: nowrap; font-weight: ${selectedTheme === t && !searchQuery ? '700' : '500'};">
                     ${t}
+                    ${unansweredCount(t) ? `<span class="unanswered-badge" title="${unansweredCount(t)} sem resposta">${unansweredCount(t)}</span>` : ''}
                 </button>
             `).join('')}
         </div>
@@ -1292,12 +1366,12 @@ async function renderCommunity(selectedTheme = null, searchQuery = null) {
 
                 <div class="topic-list scroll-container">
                     ${filteredTopics.map(t => `
-                        <div class="topic-item" onclick="window.appShowTopic(${t.id})">
+                        <div class="topic-item ${isUnanswered(t) ? 'topic-unanswered' : ''}" onclick="window.appShowTopic(${t.id})">
                             <div class="topic-header">
                                 <span style="display: flex; align-items: center; gap: 8px;">[${sanitizeHTML(t.theme)}] Por <strong><span class="clickable-user" onclick="event.stopPropagation(); window.appShowUserProfile('${jsArg(t.user_email)}')">${sanitizeHTML(t.user_name) || 'Desconhecido'}</span></strong> ${getUserRankBadge(t.user_email)}</span>
                                 <span>${new Date(t.created_at).toLocaleDateString('pt-BR')}</span>
                             </div>
-                            <div class="topic-title">${sanitizeHTML(t.title)}</div>
+                            <div class="topic-title">${isUnanswered(t) ? '<span class="tag-unanswered">Sem resposta</span>' : ''}${sanitizeHTML(t.title)}</div>
                             <div class="topic-meta">
                                 <span style="text-decoration: underline;">Ver discussão</span>
                                 ${(state.user.isModerator || t.user_email === state.user.email) ? `<button class="btn-delete" onclick="event.stopPropagation(); window.appDeleteTopic(${t.id})"><i data-lucide="trash-2"></i> Excluir</button>` : ''}
@@ -1388,6 +1462,7 @@ window.appPostReply = async (topicId, btn) => {
     } else {
         replyEl.value = '';
         window.appShowTopic(topicId);
+        refreshCommunityCounts();
         window.appShowToast('Resposta enviada!', 'success');
     }
     window.appSetButtonLoading(btn, false);
@@ -1448,6 +1523,7 @@ window.appDeleteReply = async (topicId, replyId) => {
     } else {
         window.appShowTopic(topicId);
         window.appShowToast('Resposta excluída.', 'success');
+        refreshCommunityCounts();
     }
 };
 

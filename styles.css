@@ -2034,3 +2034,22 @@ h1, h2, h3, .brand-title {
     }
 }
 
+
+/* --- Comunidade: tópicos sem resposta (v2.6) --- */
+.unanswered-badge {
+    display: inline-flex; align-items: center; justify-content: center;
+    min-width: 20px; height: 20px; padding: 0 6px; border-radius: 10px;
+    background: #FF3B30; color: #fff; font-size: 0.72rem; font-weight: 800; line-height: 1;
+    box-shadow: 0 0 0 2px var(--navy-deep, #0A0A0A);
+}
+.btn .unanswered-badge { position: absolute; top: -9px; right: -8px; }
+.nav-item .unanswered-badge { margin-left: auto; }
+.mobile-nav-item { position: relative; }
+.mobile-nav-item .unanswered-badge { position: absolute; top: 2px; right: 2px; min-width: 17px; height: 17px; font-size: 0.65rem; padding: 0 4px; }
+.tag-unanswered {
+    display: inline-block; margin-right: 8px; padding: 2px 8px; border-radius: 6px; vertical-align: middle;
+    background: rgba(255, 149, 0, 0.15); color: #FF9F0A; border: 1px solid rgba(255, 149, 0, 0.45);
+    font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: .4px;
+}
+.topic-item.topic-unanswered { border-left: 3px solid #FF9F0A; }
+.unanswered-hint { color: #FF9F0A; font-weight: 600; margin-top: 6px; }

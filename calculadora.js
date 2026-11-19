@@ -81,7 +81,9 @@
         { id: 'pgd2', tipo: 'parcelado', meio: 'cartao', parcelas: 12, jurosModo: 'sem', juros: 0 }
       ] },
       // servicosConfirmados: só vira true quando o aluno confirma ou salva a revisão dos serviços
-      flags: { servicosConfirmados: false, checklistOculto: false }
+      // marcaSalva: só vira true quando o aluno clica em "Salvar dados" em Minha Marca
+      // tourVisto: guia da primeira visita já foi mostrado
+      flags: { servicosConfirmados: false, checklistOculto: false, marcaSalva: false, tourVisto: false }
     };
   }
 
@@ -454,8 +456,144 @@
     try { await S.loading; } finally { S.loading = null; }
   }
 
+  // ---------------------------------------------------------------------------
+  // Guia passo a passo (aparece sozinho na 1ª visita; depois pelo botão "Ver guia")
+  // ---------------------------------------------------------------------------
+  var TOUR = [
+    { sel: null, titulo: 'Bem-vindo ao Acta Price!',
+      texto: 'Aqui você descobre quanto vale a sua hora, monta orçamentos sem prejuízo e gera a proposta em PDF com a sua marca. Vamos ver como funciona em poucos passos.' },
+    { sel: '[data-region="checklist"] .ac-checklist', titulo: 'Seus primeiros passos',
+      texto: 'Esta lista mostra o que falta para você começar. Cada etapa fica riscada quando você conclui. Toque em uma etapa para ir direto para ela.' },
+    { sel: '#ac-tab-hora', titulo: '1. Minha Hora',
+      texto: 'Comece por aqui: informe seus custos fixos do mês, quantas horas consegue vender por semana e a margem de lucro. A calculadora encontra o preço justo da sua hora.' },
+    { sel: '#ac-tab-servicos', titulo: '2. Serviços',
+      texto: 'Revise a lista de serviços e quantas horas cada um leva. O valor de cada serviço é calculado com a sua hora.' },
+    { sel: '#ac-tab-rapido', titulo: 'Cálculo Rápido',
+      texto: 'Precisa de um valor na hora, no WhatsApp? Use o Cálculo Rápido para estimar sem montar um orçamento completo.' },
+    { sel: '#ac-tab-marca', titulo: '3. Minha Marca',
+      texto: 'Cadastre seu nome, contatos e logo. Esses dados aparecem na proposta em PDF. Lembre de clicar em "Salvar dados".' },
+    { sel: '#ac-tab-orcamento', titulo: '4. Orçamentos',
+      texto: 'Monte o orçamento do cliente, escolha as formas de pagamento e gere a proposta em PDF. Rascunhos podem ser editados; ao baixar o PDF, o orçamento é finalizado e os valores ficam travados.' },
+    { sel: '.ac-tour-again', titulo: 'Pronto!',
+      texto: 'Seus dados ficam salvos na sua conta e só você tem acesso. Se quiser rever este guia, é só tocar aqui.' }
+  ];
+
+  function startTour() {
+    if (!S.root || !S.profile) return;
+    endTour(false);
+    S.tourOn = true;
+    S.tourStep = 0;
+    var ov = document.createElement('div');
+    ov.className = 'ac-tour';
+    ov.setAttribute('role', 'dialog');
+    ov.setAttribute('aria-modal', 'true');
+    ov.setAttribute('aria-label', 'Guia do Acta Price');
+    ov.innerHTML = '<div class="ac-tour-shade"></div><div class="ac-tour-ring"></div><div class="ac-tour-box"></div>';
+    document.body.appendChild(ov);
+    S.tourEl = ov;
+    ov.addEventListener('click', function (e) {
+      var b = e.target.closest('[data-tour]');
+      if (!b) return;
+      var a = b.getAttribute('data-tour');
+      if (a === 'next') tourGo(S.tourStep + 1, false, 1);
+      else if (a === 'prev') tourGo(S.tourStep - 1, false, -1);
+      else endTour(true);
+    });
+    S.tourKey = function (e) { if (e.key === 'Escape') endTour(true); };
+    document.addEventListener('keydown', S.tourKey);
+    S.tourResize = function () { if (S.tourOn) tourGo(S.tourStep, true, 1); };
+    window.addEventListener('resize', S.tourResize);
+    // se a pessoa rolar a tela durante o guia, o destaque acompanha o item
+    S.tourScroll = function () {
+      if (!S.tourOn || !S.tourAlvo || !S.tourEl) return;
+      tourPosicionar(S.tourAlvo, S.tourEl.querySelector('.ac-tour-box'), S.tourEl.querySelector('.ac-tour-ring'), S.tourEl.querySelector('.ac-tour-shade'));
+    };
+    window.addEventListener('scroll', S.tourScroll, true);
+    tourGo(0, false, 1);
+  }
+
+  function tourGo(i, soPosicao, dir) {
+    if (!S.tourEl) return;
+    if (i < 0) i = 0;
+    if (i >= TOUR.length) { endTour(true); return; }
+    var step = TOUR[i];
+    var alvo = step.sel ? S.root.querySelector(step.sel) : null;
+    // pula etapas cujo alvo não existe (ex.: lista de primeiros passos oculta ou já concluída)
+    if (step.sel && !alvo) {
+      var j = i + (dir || 1);
+      if (j >= 0 && j < TOUR.length) return tourGo(j, soPosicao, dir);
+    }
+    S.tourStep = i;
+    S.tourAlvo = alvo;
+    var box = S.tourEl.querySelector('.ac-tour-box');
+    var shade = S.tourEl.querySelector('.ac-tour-shade');
+    var ring = S.tourEl.querySelector('.ac-tour-ring');
+    var ultimo = i === TOUR.length - 1;
+    if (!soPosicao) {
+      box.innerHTML = '<div class="ac-tour-count">' + (i + 1) + ' de ' + TOUR.length + '</div>' +
+        '<h3>' + esc(step.titulo) + '</h3><p>' + esc(step.texto) + '</p>' +
+        '<div class="ac-tour-actions">' +
+        (ultimo ? '' : '<button type="button" class="ac-link" data-tour="skip">Pular guia</button>') +
+        '<span style="flex:1"></span>' +
+        (i > 0 ? '<button type="button" class="ac-btn ac-btn-ghost ac-btn-sm" data-tour="prev">Voltar</button>' : '') +
+        '<button type="button" class="ac-btn ac-btn-primary ac-btn-sm" data-tour="next">' + (ultimo ? 'Começar' : 'Próximo') + '</button></div>';
+      var nb = box.querySelector('[data-tour="next"]');
+      if (nb) { try { nb.focus({ preventScroll: true }); } catch (x) { nb.focus(); } }
+    }
+    if (!alvo) {
+      ring.style.display = 'none';
+      shade.style.display = 'block';
+      box.className = 'ac-tour-box ac-tour-center';
+      box.style.top = ''; box.style.left = ''; box.style.width = '';
+      return;
+    }
+    shade.style.display = 'block';
+    ring.style.display = 'none';
+    // no celular as abas rolam para o lado: traz a aba indicada para a vista
+    var tabs = alvo.closest('.ac-tabs');
+    if (tabs) tabs.scrollLeft = Math.max(0, alvo.offsetLeft - 24);
+    try { alvo.scrollIntoView({ block: 'center', behavior: soPosicao ? 'auto' : 'smooth' }); } catch (x) { alvo.scrollIntoView(); }
+    setTimeout(function () { tourPosicionar(alvo, box, ring, shade); }, soPosicao ? 0 : 400);
+  }
+
+  function tourPosicionar(alvo, box, ring, shade) {
+    if (!S.tourOn) return;
+    box.className = 'ac-tour-box';
+    var r = alvo.getBoundingClientRect();
+    // anel dourado por cima do item (o escurecido em volta vem da sombra do anel)
+    var pad = 6;
+    ring.style.top = (r.top - pad) + 'px'; ring.style.left = (r.left - pad) + 'px';
+    ring.style.width = (r.width + 2 * pad) + 'px'; ring.style.height = (r.height + 2 * pad) + 'px';
+    ring.style.display = 'block';
+    shade.style.display = 'none';
+    var vw = window.innerWidth, vh = window.innerHeight, m = 12;
+    var bw = Math.min(360, vw - 2 * m);
+    box.style.width = bw + 'px';
+    var bh = box.offsetHeight;
+    var top = r.bottom + m;
+    if (top + bh > vh - m) top = r.top - bh - m;   // não cabe embaixo: vai para cima
+    if (top < m) top = Math.max(m, vh - bh - m);    // não cabe em cima: fica no pé da tela
+    var left = Math.min(Math.max(m, r.left + r.width / 2 - bw / 2), vw - bw - m);
+    box.style.top = top + 'px';
+    box.style.left = left + 'px';
+  }
+
+  function endTour(marcarVisto) {
+    if (S.tourEl && S.tourEl.parentNode) S.tourEl.parentNode.removeChild(S.tourEl);
+    if (S.tourKey) document.removeEventListener('keydown', S.tourKey);
+    if (S.tourResize) window.removeEventListener('resize', S.tourResize);
+    if (S.tourScroll) window.removeEventListener('scroll', S.tourScroll, true);
+    S.tourAlvo = null; S.tourScroll = null;
+    S.tourEl = null; S.tourOn = false; S.tourKey = null; S.tourResize = null;
+    if (marcarVisto && S.profile && !S.profile.flags.tourVisto) {
+      S.profile.flags.tourVisto = true;
+      scheduleProfileSave();
+    }
+  }
+
   // Limpa tudo (logout ou troca de conta)
   function reset() {
+    endTour(false);
     var root = S.root;
     clearTimeout(S.pTimer); clearTimeout(S.oTimer);
     S = freshState();
@@ -593,13 +731,15 @@
       }
     }
     draw();
+    if (S.profile && !S.profile.flags.tourVisto && !S.tourOn) setTimeout(startTour, 500);
   }
 
   function draw() {
     var root = S.root;
     root.innerHTML = '<div class="ac-root">' +
       '<div class="view-header"><h2>Calculadora de Honorários</h2>' +
-      '<p>Descubra o valor da sua hora, precifique seus serviços e monte propostas sem prejuízo.</p></div>' +
+      '<p>Descubra o valor da sua hora, precifique seus serviços e monte propostas sem prejuízo.' +
+      ' <button type="button" class="ac-link ac-tour-again" data-act="tour">' + icon('compass') + 'Ver guia passo a passo</button></p></div>' +
       '<div data-region="checklist">' + renderChecklist() + '</div>' +
       '<div class="ac-tabs-wrap"><nav class="ac-tabs" role="tablist" aria-label="Seções da calculadora">' +
       TABS.map(function (t) {
@@ -767,7 +907,8 @@
     return [
       ['hora', 'Calcule sua hora', calcHora(p).precoHora > 0],
       ['servicos', 'Revise seus serviços', !!p.flags.servicosConfirmados],
-      ['marca', 'Cadastre sua marca', !!(p.marca.nome || '').trim()],
+      // Antes contava como feito só porque o nome vem preenchido com o nome do aluno
+      ['marca', 'Cadastre sua marca', !!p.flags.marcaSalva],
       ['orcamento', 'Finalize o primeiro orçamento', S.orcs.some(function (r) { return !isRascunho(r.dados); })]
     ];
   }
@@ -1450,6 +1591,10 @@
         if (t && btn.classList.contains('ac-tab')) t.focus();
         try { S.root.scrollIntoView({ block: 'start', behavior: 'smooth' }); } catch (x) { /* noop */ }
         return;
+      case 'tour':
+        e.preventDefault();
+        startTour();
+        return;
       case 'hideChecklist':
         if (!confirm('Ocultar os primeiros passos? Eles não aparecerão de novo, mesmo com etapas pendentes.')) return;
         S.profile.flags.checklistOculto = true; scheduleProfileSave(); redrawRegion('checklist');
@@ -1719,6 +1864,7 @@
       }
       if (!draft.logo && S.profile.marca.logo && S.store.removeLogo) S.store.removeLogo();
       S.profile.marca = draft; S.mkDraft = null;
+      S.profile.flags.marcaSalva = true;
       scheduleProfileSave();
       var ok = await saveProfileNow();
       toast(ok ? 'Dados salvos. Eles já aparecem nas suas propostas.' : 'Sem conexão. Seus dados serão salvos assim que a internet voltar.', ok ? 'success' : 'error');
