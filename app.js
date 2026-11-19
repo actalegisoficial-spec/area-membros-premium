@@ -67,7 +67,7 @@ function setAdminTabsVisible(visible) {
 }
 
 async function forceLogoutBlocked() {
-    _appInitialized = false;
+    _appInitialized = false; state.profileLoaded = false;
     try { await sb.auth.signOut(); } catch (e) {}
     showLoginScreen('login', BLOCKED_MSG, true);
 }
@@ -246,7 +246,7 @@ async function checkSession() {
             if (window.__authRecovery) return;
             showMainApp();
         } else if (event === 'SIGNED_OUT') {
-            _appInitialized = false; // Reseta flag para permitir novo login
+            _appInitialized = false; state.profileLoaded = false; // Reseta flag para permitir novo login
             document.getElementById('main-layout').classList.remove('active');
             document.getElementById('login-view').classList.add('active');
         }
@@ -602,7 +602,7 @@ async function showMainApp() {
         const { data: { user }, error: userError } = await sb.auth.getUser();
         if (userError || !user) {
             console.error('Erro ao obter usuário auth:', userError);
-            _appInitialized = false; // Reseta para tentar novamente
+            _appInitialized = false; state.profileLoaded = false; // Reseta para tentar novamente
             return;
         }
 
@@ -704,6 +704,7 @@ async function showMainApp() {
                         if (!state.allUsers.find(u => u.email === created.email)) state.allUsers.push(created);
                     }
                 }
+                state.profileLoaded = true;
                 updateLevel();
                 updateGlobalUI();
                 renderProgress();
@@ -723,6 +724,13 @@ async function showMainApp() {
 
             } catch (err) {
                 console.warn('Erro ao carregar dados do banco:', err);
+                // Sem conexão com o banco: mostra o que tiver em cache em vez de "Carregando" para sempre
+                if (!state.profileLoaded) {
+                    state.profileLoaded = true;
+                    updateLevel();
+                    updateGlobalUI();
+                    if (document.getElementById('dashboard-view').classList.contains('active')) renderDashboard();
+                }
             }
         })();
 
@@ -756,7 +764,9 @@ function updateGlobalUI() {
         greetingBadge.innerHTML = getUserRankBadge(state.user.email);
     }
 
-    if (headerPoints) {
+    if (headerPoints && !state.profileLoaded) {
+        headerPoints.textContent = '… pts';
+    } else if (headerPoints) {
         const currentVal = parseInt(headerPoints.textContent.replace(/\./g, '')) || 0;
         if (currentVal !== state.points) {
             animatePoints('header-points', currentVal, state.points);
@@ -929,6 +939,20 @@ function renderFranquias() {
 
 function renderDashboard() {
     console.log('[Dashboard] Renderizando...');
+    // Enquanto o perfil do banco não chega, não mostra números antigos do cache
+    if (!state.profileLoaded) {
+        const dashLoading = document.getElementById('dashboard-view');
+        if (dashLoading) dashLoading.innerHTML = `
+            <div class="view-header">
+                <h2>Bem-vindo à sua Evolução</h2>
+                <p>Carregando seus dados...</p>
+            </div>
+            <div class="card" style="text-align:center; padding:40px; color:var(--gold);">
+                <i data-lucide="loader" class="spin"></i>
+            </div>`;
+        refreshIcons();
+        return;
+    }
     try {
     const nextLevel = LEVELS[LEVELS.indexOf(state.level) + 1] || 'Limites Alcançados';
     
@@ -1129,15 +1153,21 @@ function loadState() {
     }
 }
 
+// Lista do ranking: todos os alunos, MENOS os bloqueados (pedido do dono em 2026-11-19)
+function getRankingList() {
+    const list = state.allUsers.filter(u => !u.is_blocked);
+    if (state.user && !state.allUsers.find(x => x.email === state.user.email)) {
+        list.push({ name: state.user.name, email: state.user.email, points: state.points });
+    }
+    return list;
+}
+
 function renderRanking() {
     const view = document.getElementById('ranking-view');
     if (!view) return;
 
     // O ranking utiliza state.allUsers que já é sincronizado com o Supabase no init() e no setupRealtime()
-    const rankingList = [...state.allUsers];
-    if (state.user && !rankingList.find(x => x.email === state.user.email)) {
-        rankingList.push({ name: state.user.name, email: state.user.email, points: state.points });
-    }
+    const rankingList = getRankingList();
     if (rankingList.length === 0) {
         view.innerHTML = `<div class="view-header"><h2>Ranking Geral</h2></div><div class="card"><p style="color:var(--text-muted);text-align:center;padding:40px">Nenhum aluno no ranking ainda.</p></div>`;
         return;
@@ -1794,10 +1824,7 @@ function updateLevel() {
         const u = state.allUsers.find(x => x.email === state.user.email);
         if (u) u.points = state.points;
         
-        const rankingList = [...state.allUsers];
-        if (!rankingList.find(x => x.email === state.user.email)) {
-            rankingList.push({ email: state.user.email, points: state.points });
-        }
+        const rankingList = getRankingList();
         rankingList.sort((a, b) => (b.points || 0) - (a.points || 0));
         const userIndex = rankingList.findIndex(x => x.email === state.user.email);
         if (userIndex !== -1) {
@@ -1823,6 +1850,13 @@ function triggerConfetti() {
 // Estado de ordenação da lista de usuários
 var usersSort = { field: '_entry_order', asc: true };
 
+// "Membro desde" é guardado como texto "dd/mm/aaaa"; converte para "aaaammdd" para ordenar certo
+function joinedDateKey(v) {
+    const m = String(v || '').match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    if (!m) return '';
+    return m[3] + m[2].padStart(2, '0') + m[1].padStart(2, '0');
+}
+
 function renderUsers() {
     const view = document.getElementById('users-view');
     if (!view) return;
@@ -1838,6 +1872,7 @@ function renderUsers() {
         let va = a[usersSort.field] || '';
         let vb = b[usersSort.field] || '';
         if (usersSort.field === 'points') { va = Number(va); vb = Number(vb); }
+        else if (usersSort.field === 'joined_date') { va = joinedDateKey(va); vb = joinedDateKey(vb); }
         else { va = String(va).toLowerCase(); vb = String(vb).toLowerCase(); }
         if (va < vb) return usersSort.asc ? -1 : 1;
         if (va > vb) return usersSort.asc ? 1 : -1;
@@ -1975,10 +2010,11 @@ function renderUsers() {
                             <th>Nome</th>
                             <th>E-mail</th>
                             <th>Status (DB)</th>
+                            <th style="text-align:center;">Excluir</th>
                         </tr>
                     </thead>
                     <tbody>
-                        ${state.franchiseRequests.length === 0 ? '<tr><td colspan="4" style="text-align:center; color:var(--text-muted);">Nenhum interessado ainda.</td></tr>' : ''}
+                        ${state.franchiseRequests.length === 0 ? '<tr><td colspan="5" style="text-align:center; color:var(--text-muted);">Nenhum interessado ainda.</td></tr>' : ''}
                         ${state.franchiseRequests.map(r => {
                             const dateStr = new Date(r.created_at).toLocaleDateString('pt-BR', { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit'});
                             return `
@@ -1987,6 +2023,9 @@ function renderUsers() {
                                 <td style="font-weight:700; color:var(--white);">${sanitizeHTML(r.user_name)}</td>
                                 <td>${sanitizeHTML(r.user_email)}</td>
                                 <td><span class="status-indicator status-${r.status === 'pending' ? 'blocked' : 'active'}">${sanitizeHTML(r.status)}</span></td>
+                                <td style="text-align:center;">
+                                    <button class="btn-delete-small" title="Remover da lista" onclick="window.appDeleteFranchiseRequest('${jsArg(r.id)}')"><i data-lucide="trash-2"></i></button>
+                                </td>
                             </tr>
                             `;
                         }).join('')}
@@ -1997,6 +2036,24 @@ function renderUsers() {
     `;
     refreshIcons();
 }
+
+// Remove um pedido de franquia da lista "Possíveis Parceiros" (só administradores)
+window.appDeleteFranchiseRequest = (id) => {
+    const req = state.franchiseRequests.find(r => String(r.id) === String(id));
+    if (!req) return;
+    const body = `<p>Remover o pedido de <strong>${sanitizeHTML(req.user_name)}</strong> da lista de Possíveis Parceiros?</p>`;
+    appShowModal('Excluir Pedido', body, async () => {
+        appCloseModal();
+        const { data, error } = await sb.from('franchise_requests').delete().eq('id', req.id).select('id');
+        if (error || !data || data.length === 0) {
+            window.appShowToast('Não foi possível excluir o pedido.' + (error ? ' ' + error.message : ''), 'error');
+            return;
+        }
+        state.franchiseRequests = state.franchiseRequests.filter(r => String(r.id) !== String(id));
+        renderUsers();
+        window.appShowToast('Pedido removido da lista.', 'success');
+    });
+};
 
 window.appToggleVerified = async (email) => {
     const user = state.allUsers.find(u => u.email === email);
