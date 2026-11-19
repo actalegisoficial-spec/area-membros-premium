@@ -286,9 +286,13 @@ async function keepDrafts(renderFn) {
     }
 }
 
-function setupRealtime() {
-    // Evita canais duplicados se o usuário sair e entrar de novo sem recarregar a página
-    try { sb.removeAllChannels(); } catch (e) {}
+async function setupRealtime() {
+    // Evita canais duplicados se o usuário sair e entrar de novo sem recarregar a página.
+    // IMPORTANTE: só remove se existir canal, e ESPERA terminar — removeAllChannels()
+    // desconecta o socket; sem o await os canais novos nasciam já "errored".
+    try {
+        if (sb.getChannels().length > 0) await sb.removeAllChannels();
+    } catch (e) {}
 
     // --- Helpers de atualização cirúrgica ---
     function applyPayloadToArray(arr, payload) {
