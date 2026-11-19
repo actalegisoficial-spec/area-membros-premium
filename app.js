@@ -53,7 +53,7 @@ function showLoginScreen(tab, msg, isError) {
     document.getElementById('login-view').classList.add('active');
     window.appSwitchAuthTab(tab || 'login');
     if (msg) {
-        const el = document.getElementById(tab === 'reset' ? 'reset-error' : 'login-error');
+        const el = document.getElementById((tab || 'login') + '-error');
         if (el) { el.textContent = msg; el.style.color = isError ? '#FF3B30' : '#2ECC71'; }
     }
 }
